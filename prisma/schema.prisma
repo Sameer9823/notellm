@@ -1,0 +1,492 @@
+// Prisma schema — Neon Postgres
+// Run `npm run db:push` to sync, or `npm run db:migrate` for migrations.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum SourceType {
+  PDF
+  TEXT
+  URL
+  YOUTUBE
+  VTT
+}
+
+enum SourceStatus {
+  UPLOADING
+  QUEUED
+  INDEXING
+  READY
+  FAILED
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+}
+
+enum AudioStatus {
+  QUEUED
+  SCRIPTING
+  SYNTHESIZING
+  READY
+  FAILED
+}
+
+enum RoadmapStatus {
+  QUEUED
+  CLUSTERING
+  LABELING
+  ORDERING
+  READY
+  FAILED
+}
+
+// Ported from sourcelm (Sovyniq) — study artifacts generated from a
+// notebook's sources: a markdown summary, bullet takeaways, a flashcard
+// deck, a multiple-choice quiz, a mind map (nodes/edges), or a long-form
+// report. FLASHCARDS/QUIZ artifacts feed the spaced-repetition Review
+// system below once they're READY.
+enum ArtifactType {
+  SUMMARY
+  TAKEAWAYS
+  FLASHCARDS
+  QUIZ
+  MINDMAP
+  REPORT
+}
+
+enum ArtifactStatus {
+  QUEUED
+  GENERATING
+  READY
+  FAILED
+}
+
+// Ported from sourcelm — SM-2 spaced-repetition grading. FLASHCARD cards
+// are self-graded by the learner; QUIZ cards are graded automatically
+// (GOOD if the selected option was correct, AGAIN otherwise).
+enum ReviewGrade {
+  AGAIN
+  HARD
+  GOOD
+  EASY
+}
+
+enum ReviewCardType {
+  FLASHCARD
+  QUIZ
+}
+
+// Ported from sourcelm's Mem0-backed memory feature, reimplemented as a
+// self-contained Postgres table (no external memory-service dependency):
+// MANUAL memories are typed directly by the user in Settings > Memory,
+// LEARNED memories are extracted by an LLM pass over recent chat turns.
+enum MemorySource {
+  MANUAL
+  LEARNED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+  UNPAID
+}
+
+enum CreditTransactionType {
+  SIGNUP_BONUS
+  PURCHASE
+  SUBSCRIPTION_GRANT
+  USAGE
+  REFUND
+  ADJUSTMENT
+}
+
+model Notebook {
+  id          String   @id @default(cuid())
+  ownerId     String   // Clerk user id — enforces per-user notebook isolation
+  title       String   @default("Untitled notebook")
+  description String?
+  icon        String   @default("notebook")
+  color       String   @default("violet")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Read-only public sharing. When isPublic is true, shareSlug resolves via
+  // /api/public/notebooks/[slug] and /shared/[slug] with NO auth required —
+  // it exposes source titles/content and existing chat history, but never
+  // accepts new questions or mutations. shareSlug is generated once and
+  // kept stable across re-shares so old links don't silently break; only
+  // explicitly revoking sharing clears it.
+  isPublic    Boolean  @default(false)
+  shareSlug   String?  @unique
+
+  sources        Source[]
+  messages       Message[]
+  audioOverviews AudioOverview[]
+  roadmaps       Roadmap[]
+  notes          Note[]
+  artifacts      Artifact[]
+  reviewCards    ReviewCard[]
+
+  @@index([ownerId, updatedAt])
+}
+
+// Fixed-window credit budget per Clerk user, shared across every notebook
+// they own. One row per user; `balance` is decremented by lib/credits.ts on
+// each metered action (chat message, source upload, audio/roadmap
+// generation) and snapped back to `CREDITS_MAX` the first time it's touched
+// after `windowStart + CREDITS_WINDOW_HOURS` has elapsed — see
+// src/lib/credits.ts for the single source of truth on the reset logic.
+model UserCredits {
+  userId      String   @id // Clerk user id
+  balance     Int      @default(50)
+  windowStart DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Note {
+  id         String   @id @default(cuid())
+  notebookId String
+  notebook   Notebook @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+
+  content   String  @db.Text
+  // Pinned-answer notes carry over the citations of the assistant message
+  // they were pinned from: array of { chunkId, sourceId, sourceTitle,
+  // page?, startSec?, endSec?, snippet }, same shape as Message.citations.
+  citations Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([notebookId, createdAt])
+}
+
+model Roadmap {
+  id         String        @id @default(cuid())
+  notebookId String
+  notebook   Notebook      @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+
+  status       RoadmapStatus @default(QUEUED)
+  errorMessage String?
+
+  // Concept clusters, LLM-labeled and topologically ordered by cross-video
+  // keyword progression. Shape (see lib/roadmap-pipeline.ts):
+  // nodes: [{ id, order, label, summary, keywords: string[],
+  //           videos: [{ sourceId, title, videoId, timestamps: number[] }] }]
+  nodes Json?
+
+  // Directed precedence edges between node ids, derived from where each
+  // cluster's chunks tend to fall earlier/later within and across the
+  // linked videos: [{ from: nodeId, to: nodeId }]
+  edges Json?
+
+  // How many linked YouTube sources fed this run, so a stale roadmap can be
+  // detected if more videos are added later.
+  sourceCount Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([notebookId, createdAt])
+}
+
+model AudioOverview {
+  id         String      @id @default(cuid())
+  notebookId String
+  notebook   Notebook    @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+
+  // When set, this overview was generated from a single source only
+  // (scoped from the sources rail) instead of every ready source in the
+  // notebook. Null = "All sources" (notebook-wide), the original behavior.
+  sourceId     String?
+  sourceTitle  String?
+
+  status       AudioStatus @default(QUEUED)
+  errorMessage String?
+
+  // Two-host dialogue script, generated from the notebook's sources:
+  // [{ speaker: "A" | "B", text: string }, ...]
+  script       Json?
+
+  // MP3 stored in Cloudinary when CLOUDINARY_* env vars are configured
+  // (audioUrl/audioPublicId set, audioData left null); falls back to
+  // storing raw bytes directly in Postgres via `audioData` otherwise, or
+  // for rows created before Cloudinary was wired in. `/audio/[id]/file`
+  // checks audioUrl first and redirects there, serving audioData as the
+  // legacy fallback.
+  audioData    Bytes?
+  audioUrl     String?
+  audioPublicId String?
+  durationSec  Int?
+  voiceA       String      @default("alloy")
+  voiceB       String      @default("onyx")
+
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([notebookId, createdAt])
+  @@index([notebookId, sourceId])
+}
+
+model Source {
+  id            String       @id @default(cuid())
+  notebookId    String
+  notebook      Notebook     @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+
+  type          SourceType
+  title         String
+  status        SourceStatus @default(UPLOADING)
+  errorMessage  String?
+
+  // Raw location / payload
+  originUrl     String?      // website or youtube url
+  // Cloudinary secure_url for the original uploaded file (PDF/VTT) when
+  // CLOUDINARY_* env vars are configured — see src/lib/cloudinary.ts. The
+  // ingest pipeline fetches from here instead of decoding a base64 blob
+  // out of `rawText`. Null when Cloudinary isn't configured (falls back
+  // to the old base64-in-rawText flow) or for non-file source types.
+  storagePath   String?
+  storagePublicId String?
+  rawText       String?      @db.Text // for TEXT sources, or extracted plain text cache (preview)
+
+  // Metadata
+  fileSizeBytes Int?
+  pageCount     Int?         // pdf
+  durationSec   Int?         // youtube
+  language      String?
+  metadata      Json?        // arbitrary: author, published date, video channel, etc.
+
+  chunkCount    Int          @default(0)
+
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  indexedAt     DateTime?
+
+  chunks        Chunk[]
+
+  @@index([notebookId])
+  @@index([status])
+}
+
+model Chunk {
+  id         String   @id @default(cuid())
+  sourceId   String
+  source     Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  notebookId String   // denormalized for fast filtering
+
+  index      Int      // order within source
+  content    String   @db.Text
+  tokenCount Int?
+
+  // For citation / deep-linking back to origin
+  startChar  Int?     // TEXT/URL: char offset
+  endChar    Int?
+  page       Int?     // PDF: page number
+  startSec   Int?     // YOUTUBE/VTT: timestamp start (seconds)
+  endSec     Int?     // YOUTUBE/VTT: timestamp end (seconds)
+
+  // vector id in Qdrant (== this chunk's id, kept explicit for clarity)
+  vectorId   String   @unique
+
+  createdAt  DateTime @default(now())
+
+  @@index([sourceId])
+  @@index([notebookId])
+}
+
+model Message {
+  id         String      @id @default(cuid())
+  notebookId String
+  notebook   Notebook    @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+
+  role       MessageRole
+  content    String      @db.Text
+  citations  Json?       // array of { chunkId, sourceId, sourceTitle, page?, startSec?, endSec?, snippet }
+
+  createdAt  DateTime    @default(now())
+
+  @@index([notebookId, createdAt])
+}
+// ---------------------------------------------------------------------------
+// Study artifacts (ported from sourcelm's LearningArtifact)
+// ---------------------------------------------------------------------------
+
+model Artifact {
+  id         String         @id @default(cuid())
+  notebookId String
+  notebook   Notebook       @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+
+  type         ArtifactType
+  title        String
+  status       ArtifactStatus @default(QUEUED)
+  errorMessage String?
+
+  // Which sources fed this artifact. Empty array = every READY source in
+  // the notebook at generation time (same "All sources" convention as
+  // AudioOverview.sourceId == null).
+  sourceIds    String[]       @default([])
+
+  // Type-specific JSON payload. Shape depends on `type` — see
+  // src/lib/artifact-pipeline.ts for the exact schema of each:
+  //   SUMMARY:    { markdown: string }
+  //   TAKEAWAYS:  { items: string[] }
+  //   FLASHCARDS: { cards: { front: string; back: string }[] }
+  //   QUIZ:       { questions: { question, options[], correctIndex, explanation }[] }
+  //   MINDMAP:    { nodes: { id, label }[], edges: { id, source, target }[] }
+  //   REPORT:     { markdown: string, sections: { title, content }[] }
+  content      Json?
+
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  reviewCards  ReviewCard[]
+
+  @@index([notebookId, createdAt])
+  @@index([notebookId, type])
+}
+
+// ---------------------------------------------------------------------------
+// Spaced-repetition review (ported from sourcelm's ReviewCard/ReviewLog)
+// ---------------------------------------------------------------------------
+
+/// One flashcard OR quiz question tracked with its own SM-2 scheduling
+/// state. Rows are created automatically whenever a FLASHCARDS or QUIZ
+/// artifact finishes generating (see src/lib/review.ts) and live
+/// independently of the artifact afterward — reviewing a card never
+/// touches the artifact's `content` JSON.
+model ReviewCard {
+  id             String         @id @default(cuid())
+  userId         String         // Clerk user id — owns their own review queue
+  notebookId     String
+  artifactId     String
+  cardIndex      Int
+  cardType       ReviewCardType @default(FLASHCARD)
+
+  front          String         @db.Text
+  back           String         @db.Text
+  options        String[]       @default([])
+  correctIndex   Int?
+  explanation    String?        @db.Text
+
+  easeFactor     Float          @default(2.5)
+  intervalDays   Int            @default(0)
+  repetitions    Int            @default(0)
+  dueAt          DateTime       @default(now())
+  lastReviewedAt DateTime?
+  lastGrade      ReviewGrade?
+
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  notebook Notebook @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+  artifact Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  logs     ReviewLog[]
+
+  @@unique([artifactId, cardIndex])
+  @@index([userId, dueAt])
+  @@index([notebookId])
+}
+
+/// Append-only history of review submissions, used to compute the daily
+/// streak and "reviewed today" stats.
+model ReviewLog {
+  id         String      @id @default(cuid())
+  userId     String
+  cardId     String
+  grade      ReviewGrade
+  reviewedAt DateTime    @default(now())
+
+  card ReviewCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([userId, reviewedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Long-term memory (ported from sourcelm's Mem0-backed memory feature,
+// reimplemented on Postgres so the port doesn't require a new third-party
+// service/API key)
+// ---------------------------------------------------------------------------
+
+model UserMemory {
+  id        String       @id @default(cuid())
+  userId    String       // Clerk user id
+  memory    String       @db.Text
+  source    MemorySource @default(MANUAL)
+  metadata  Json?
+  // Qdrant point id (uuid, since Prisma's cuid ids aren't valid Qdrant
+  // point ids) for this memory's embedding in the `user_memories`
+  // collection — see src/lib/qdrant.ts. Null until embedded; getMemoryContext
+  // falls back to a recency window for any memory that never got one
+  // (embedding failed, or Qdrant wasn't configured at creation time).
+  vectorId  String?
+
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@index([userId, updatedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Billing (ported from sourcelm's Stripe-backed billing feature). Sits
+// alongside the existing fixed-window UserCredits system: UserCredits stays
+// the free-tier metering mechanism, while a Subscription grants a monthly
+// top-up recorded as a CreditTransaction against the same balance.
+// ---------------------------------------------------------------------------
+
+/// 1:1 link between a Clerk user and their Stripe Customer object.
+model StripeCustomer {
+  id               String   @id @default(cuid())
+  userId           String   @unique // Clerk user id
+  stripeCustomerId String   @unique
+  createdAt        DateTime @default(now())
+}
+
+/// Recurring monthly plan. One active subscription per user; renewal
+/// grants are driven by the `invoice.paid` Stripe webhook, not by this
+/// row's dates directly.
+model Subscription {
+  id                   String             @id @default(cuid())
+  userId               String             @unique
+  stripeSubscriptionId String             @unique
+  stripePriceId        String
+  planId               String
+  status               SubscriptionStatus
+  currentPeriodEnd     DateTime
+  cancelAtPeriodEnd    Boolean            @default(false)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+}
+
+/// Immutable ledger of every credit grant/spend that goes through billing
+/// (purchases, subscription grants, refunds). Separate from the
+/// fixed-window UserCredits.balance, which tracks the free-tier meter —
+/// `balanceAfter` here is a running total of *purchased/granted* credits.
+model CreditTransaction {
+  id           String                 @id @default(cuid())
+  userId       String
+  type         CreditTransactionType
+  amount       Int
+  balanceAfter Int
+  description  String
+  metadata     Json?
+  createdAt    DateTime               @default(now())
+
+  @@index([userId])
+  @@index([userId, createdAt])
+}
+
+/// Idempotency guard so a Stripe webhook retry never double-grants credits.
+model ProcessedStripeEvent {
+  id          String   @id
+  processedAt DateTime @default(now())
+}
