@@ -12,7 +12,7 @@ Built with Next.js 16, Clerk, Neon (Postgres) + Prisma, Qdrant, Redis, OpenAI, s
 components, and Framer Motion.
 
 Live demo: https://notellm-two.vercel.app/
-
+ 
 ---
 
 ## 1. Stack & why
