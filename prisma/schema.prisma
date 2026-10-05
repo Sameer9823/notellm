@@ -32,6 +32,11 @@ enum MessageRole {
   ASSISTANT
 }
 
+enum MessageChannel {
+  TEXT
+  VOICE
+}
+
 enum AudioStatus {
   QUEUED
   SCRIPTING
@@ -312,8 +317,9 @@ model Message {
   role       MessageRole
   content    String      @db.Text
   citations  Json?       // array of { chunkId, sourceId, sourceTitle, page?, startSec?, endSec?, snippet }
+  channel    MessageChannel @default(TEXT)
 
-  createdAt  DateTime    @default(now())
+  createdAt  DateTime @default(now())
 
   @@index([notebookId, createdAt])
 }

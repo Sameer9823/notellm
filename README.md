@@ -248,6 +248,10 @@ manual setup needed beyond having a reachable Qdrant URL + key.
 | `REDIS_URL`                                                                                   | Redis connection string (status cache; also used by the optional BullMQ worker)  |
 | `OPENAI_API_KEY`, `OPENAI_CHAT_MODEL`, `OPENAI_EMBEDDING_MODEL`                               | LLM + embedding config                                                           |
 | `OPENAI_TTS_MODEL`                                                                             | *(optional)* TTS model for audio overviews — defaults to `gpt-4o-mini-tts`       |
+| `OPENAI_REALTIME_MODEL`, `OPENAI_REALTIME_VOICE`                                              | *(voice mode)* OpenAI Realtime model + voice identifier                          |
+| `VOICE_TOKEN_SECRET`                                                                           | *(voice mode)* HMAC secret for signing tool tokens — generate with `openssl rand -base64 32` |
+| `VOICE_TOKEN_TTL_SECONDS`                                                                      | *(voice mode)* Ephemeral token TTL — defaults to `600` (10 min)                  |
+| `VOICE_CREDIT_COST_PER_BLOCK`, `VOICE_CREDIT_BLOCK_MINUTES`                                   | *(voice mode)* Credit cost + duration per voice block                           |
 | `CREDITS_MAX_PER_WINDOW`                                                                       | *(optional)* Credits per user per window — defaults to `50`                      |
 | `CREDITS_WINDOW_HOURS`                                                                         | *(optional)* Hours before the credit balance refreshes — defaults to `6`         |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`                                       | Clerk auth                                                                       |
@@ -285,4 +289,38 @@ separate process/service — the underlying pipeline functions don't change eith
   how the material actually builds.
 - **Credit checks are race-safe**: balance reads use a row-locked transaction so concurrent requests can't
   both read a stale non-zero balance and both be let through.
+
+---
+
+## 10. Voice mode (Realtime API)
+
+A notebook-scoped realtime voice conversation is available via the Phone icon in the chat input bar.
+It uses the OpenAI Realtime API over WebRTC through `samai-sdk/voice`.
+
+### Security model
+
+- `OPENAI_API_KEY` is **never** sent to the browser. The route mints a short-lived ephemeral client secret
+  (`createRealtimeClientSecret`) and returns it only after Clerk auth + notebook ownership checks.
+- Tool calls are authenticated with an HMAC-signed `x-voice-tool-token` containing `userId`, `notebookId`,
+  `sessionId`, and `exp`. The server verifies signature + expiry on every request and re-checks
+  `notebook.ownerId === userId`.
+- The model never sees or supplies `notebookId`; it comes only from the signed token.
+
+### Abuse limits
+
+- One credit block (default: 1 credit per 5 minutes) is deducted when a new voice session starts.
+- Reconnects within the same session (`refresh: true`) do **not** deduct additional credits.
+- Only one active voice session per user is allowed (Redis key with TTL = token expiry).
+- A Redis-backed rate limiter caps new session minting to 5 attempts per minute.
+
+### Limitations
+
+- Audio is sent as 24 kHz PCM over WebRTC; browser support requires modern Chrome, Edge, or Safari.
+- The assistant answers only from `search_notebook` results — no outside knowledge.
+- Citations from tool results are shown as chips in the transcript and saved to chat history as
+  `Message` rows with `channel: VOICE`.
+- On reconnect, the last 6 voice turns are summarized and injected into the new session's instructions
+  (no turn-by-turn replay via `sendText`).
+- Language is currently selectable from English, Hindi, and Tamil.
+
 

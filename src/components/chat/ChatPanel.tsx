@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from "react";
-import { Mic, MicOff, Send, Sparkles, Globe } from "lucide-react";
+import { Mic, MicOff, Send, Sparkles, Globe, Phone } from "lucide-react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useSpeechRecognition } from "@/hooks/use-speech-recognition";
+import { VoiceAgentScreen } from "@/components/voice/VoiceAgent";
 import { cn } from "@/lib/utils";
 import { ExportMenu } from "@/components/shared/ExportMenu";
 import { chatToMarkdown, chatToPdfHtml, downloadMarkdown, printAsPdf } from "@/lib/export";
@@ -37,6 +37,27 @@ export const ChatPanel = forwardRef<ChatPanelHandle, {
   const [messages, setMessages] = useState<(MessageDTO & { streaming?: boolean })[]>(initialMessages);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [voiceOpen, setVoiceOpen] = useState(false);
+
+  useEffect(() => {
+    if (!voiceOpen) return;
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { sourceId: string; chunkId: string; page?: number | null; startSec?: number | null; endSec?: number | null };
+      onOpenCitation({
+        marker: 0,
+        chunkId: detail.chunkId,
+        sourceId: detail.sourceId,
+        sourceTitle: "",
+        sourceType: "TEXT",
+        page: detail.page ?? null,
+        startSec: detail.startSec ?? null,
+        endSec: detail.endSec ?? null,
+        snippet: "",
+      });
+    };
+    window.addEventListener("voice:open-citation", handler as EventListener);
+    return () => window.removeEventListener("voice:open-citation", handler as EventListener);
+  }, [voiceOpen, onOpenCitation]);
   // Persists across messages in this session (not saved server-side) —
   // mirrors ChatGPT's web-browsing toggle: once turned on, every question
   // asked in this chat pulls in live web results alongside notebook context,
@@ -56,7 +77,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, {
     focusInput: () => textareaRef.current?.focus(),
   }));
 
-  const { isSupported: micSupported, isListening, toggle: toggleMic } = useSpeechRecognition(setInput);
+  // const { isSupported: micSupported, isListening, toggle: toggleMic } = useSpeechRecognition(setInput);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -181,9 +202,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, {
     runQuery(precedingUser.content, assistantMsg.id, scopeRef.current, webSearchRef.current);
   }
 
-  function handleMicToggle() {
-    toggleMic(input);
-  }
+  // Removed browser SpeechRecognition mic in favor of realtime voice mode.
 
   const lastAssistantId = [...messages].reverse().find((m) => m.role === "ASSISTANT")?.id;
 
@@ -232,63 +251,53 @@ export const ChatPanel = forwardRef<ChatPanelHandle, {
       </ScrollArea>
 
       <div className="border-t border-border bg-card/60 p-3 sm:p-4">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            ask(input);
-          }}
-          className="mx-auto flex max-w-2xl items-end gap-1.5 sm:gap-2"
-        >
-          {micSupported && (
+        {voiceOpen ? (
+          <VoiceAgentScreen notebookId={notebookId} onClose={() => setVoiceOpen(false)} />
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              ask(input);
+            }}
+            className="mx-auto flex max-w-2xl items-end gap-1.5 sm:gap-2"
+          >
             <Button
               type="button"
-              variant={isListening ? "default" : "outline"}
+              variant="outline"
               size="icon"
-              onClick={handleMicToggle}
-              title={isListening ? "Stop dictation" : "Dictate your question"}
-              className={cn("shrink-0", isListening && "animate-pulse")}
+              onClick={() => setVoiceOpen(true)}
+              title="Start voice conversation"
+              className="shrink-0"
             >
-              {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+              <Phone className="h-4 w-4" />
             </Button>
-          )}
-          <Button
-            type="button"
-            variant={webSearchOn ? "default" : "outline"}
-            size="icon"
-            onClick={() => setWebSearchOn((v) => !v)}
-            title={webSearchOn ? "Web search on — click to turn off" : "Turn on web search"}
-            className="shrink-0"
-          >
-            <Globe className="h-4 w-4" />
-          </Button>
-          <Textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                ask(input);
+            <Textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  ask(input);
+                }
+              }}
+              placeholder={
+                scopeSourceId
+                  ? `Ask a question about ${scopeSourceTitle ?? "this source"}…`
+                  : readySources.length > 0
+                  ? "Ask a question grounded in your sources…"
+                  : webSearchOn
+                  ? "Ask anything — I'll search the web…"
+                  : "Ask anything, like you would ChatGPT…"
               }
-            }}
-            placeholder={
-              isListening
-                ? "Listening…"
-                : scopeSourceId
-                ? `Ask a question about ${scopeSourceTitle ?? "this source"}…`
-                : readySources.length > 0
-                ? "Ask a question grounded in your sources…"
-                : webSearchOn
-                ? "Ask anything — I'll search the web…"
-                : "Ask anything, like you would ChatGPT…"
-            }
-            rows={1}
-            className="max-h-40 min-h-[2.5rem] flex-1 resize-none"
-          />
-          <Button type="submit" size="icon" disabled={busy || !input.trim()} className="shrink-0">
-            <Send className="h-4 w-4" />
-          </Button>
-        </form>
+              rows={1}
+              className="max-h-40 min-h-[2.5rem] flex-1 resize-none"
+            />
+            <Button type="submit" size="icon" disabled={busy || !input.trim()} className="shrink-0">
+              <Send className="h-4 w-4" />
+            </Button>
+          </form>
+        )}
         <p className="mx-auto mt-2 max-w-2xl text-center text-[11px] text-muted-foreground">
           {scopeSourceId
             ? `Answers are grounded in "${scopeSourceTitle ?? "this source"}", with every claim cited${webSearchOn ? ", plus live web results" : ""}.`
@@ -296,7 +305,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, {
             ? `Answers are grounded in this notebook's sources, with every claim cited${webSearchOn ? ", plus live web results" : ""}. Nothing relevant? I'll say so and answer generally.`
             : webSearchOn
             ? "Web search is on — I'll pull in live results and cite them."
-            : "No sources yet, so I'll just chat — add a source anytime for grounded, cited answers."}
+            : "No sources yet, so I'll just chat — add a source anytime for grounded, cited answers, or turn on web search for live results."}
         </p>
       </div>
     </div>
