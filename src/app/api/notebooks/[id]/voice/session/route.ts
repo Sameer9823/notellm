@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 const VOICE_RATE_LIMIT = { limit: 5, windowSec: 60 };
 
-function activeSessionKey(userId: string) {
+export function activeSessionKey(userId: string) {
   return `voice:session:active:${userId}`;
 }
 
@@ -22,12 +22,32 @@ async function claimActiveSession(userId: string, sessionId: string, ttlSeconds:
   return setResult === "OK";
 }
 
-async function releaseActiveSession(userId: string, sessionId: string): Promise<void> {
+export async function releaseActiveSession(userId: string, sessionId: string): Promise<void> {
   const key = activeSessionKey(userId);
   const current = await redis.get(key);
   if (current === sessionId) {
     await redis.del(key).catch(() => {});
   }
+}
+
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { id: notebookId } = await params;
+
+  const notebook = await db.notebook.findUnique({ where: { id: notebookId } });
+  if (!notebook || notebook.ownerId !== userId) {
+    return NextResponse.json({ error: "Notebook not found" }, { status: 404 });
+  }
+
+  const key = activeSessionKey(userId);
+  const current = await redis.get(key);
+  if (current) {
+    await redis.del(key).catch(() => {});
+  }
+
+  return NextResponse.json({ released: !!current });
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -58,14 +78,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const isRefresh = body.refresh === true;
   const language = body.language?.startsWith("en") ? "English" : body.language?.startsWith("hi") ? "Hindi" : body.language?.startsWith("ta") ? "Tamil" : "English";
 
+  const sessionId = crypto.randomUUID();
+
   if (!isRefresh) {
-    const claimed = await claimActiveSession(userId, crypto.randomUUID(), VOICE_CREDIT_BLOCK_MINUTES * 60);
+    const claimed = await claimActiveSession(userId, sessionId, VOICE_CREDIT_BLOCK_MINUTES * 60);
     if (!claimed) {
       return NextResponse.json({ error: "You already have an active voice session. End it before starting a new one." }, { status: 409 });
     }
 
     const spend = await consumeCredits(userId, VOICE_CREDIT_COST_PER_BLOCK);
-    if (!spend.allowed) return creditsExhaustedResponse(spend.status);
+    if (!spend.allowed) {
+      await releaseActiveSession(userId, sessionId).catch(() => {});
+      return creditsExhaustedResponse(spend.status);
+    }
 
     console.log(
       JSON.stringify({
@@ -111,8 +136,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
   }
 
-  const sessionId = crypto.randomUUID();
-
   try {
     const { value, expiresAt } = await createRealtimeClientSecret({
       apiKey,
@@ -157,6 +180,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       expiresAt,
     });
   } catch (err) {
+    if (!isRefresh) {
+      await releaseActiveSession(userId, sessionId).catch(() => {});
+    }
     const message = err instanceof Error ? err.message : String(err);
     const statusMatch = /\((\d{3})/.exec(message);
     const status = statusMatch ? Number(statusMatch[1]) : 502;

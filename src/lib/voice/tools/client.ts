@@ -25,10 +25,10 @@ export const VOICE_TOOLS = [
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        return { error: body?.error ?? "The search_notebook tool failed." };
+        return JSON.stringify({ error: body?.error ?? "The search_notebook tool failed." });
       }
       const data = await res.json();
-      return { result: data.result };
+      return data.result;
     },
   }),
 ];

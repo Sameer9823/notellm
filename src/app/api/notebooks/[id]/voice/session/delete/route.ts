@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { redis } from "@/lib/redis";
 import { db } from "@/lib/db";
-import { activeSessionKey, releaseActiveSession } from "../session/route";
+import { activeSessionKey, releaseActiveSession } from "../route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

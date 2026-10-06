@@ -57,6 +57,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ nam
   try {
     const tool = createSearchNotebookTool(notebookId);
     const result = await tool.execute(parsed.data);
+    console.log(`[voice/tools/${name}] notebookId=${notebookId} resultLen=${String(result).length}`);
     return NextResponse.json({ ok: true, result, sessionId });
   } catch (err) {
     console.error(`[voice/tools/${name}] threw:`, err);

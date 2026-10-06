@@ -604,6 +604,45 @@ export function useVoiceSession(): UseVoiceSessionResult {
   const currentNotebookIdRef = useRef<string>("");
   const sessionInfoRef = useRef<SessionResponseBody | null>(null);
 
+  const attemptStart = useCallback(async (notebookId: string, language: string, attempts = 0): Promise<SessionResponseBody> => {
+    const res = await fetch(`/api/notebooks/${notebookId}/voice/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ language }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      let kind: VoiceErrorKind = "session_failed";
+      if (res.status === 401) kind = "unauthorized";
+      else if (res.status === 402) kind = "out_of_credits";
+      else if (res.status === 403) kind = "forbidden";
+      else if (res.status === 404) kind = "forbidden";
+      else if (res.status === 409) kind = "session_active";
+      else if (res.status === 429) kind = "rate_limited";
+      else if (res.status === 500 && data.error === "auth_failed") kind = "auth_failed";
+
+      if (kind === "session_active" && attempts < 3) {
+        await fetch(`/api/notebooks/${notebookId}/voice/session`, { method: "DELETE" }).catch(() => {});
+        await new Promise((r) => setTimeout(r, 500));
+        return attemptStart(notebookId, language, attempts + 1);
+      }
+
+      if (kind === "rate_limited" && attempts < 3) {
+        await new Promise((r) => setTimeout(r, 2000));
+        return attemptStart(notebookId, language, attempts + 1);
+      }
+
+      activeRef.current = false;
+      setIsActive(false);
+      setError({ kind, message: data.error ?? "Could not start a voice session.", retryable: res.status === 429 || res.status >= 500 });
+      setState("error");
+      throw new Error("start failed");
+    }
+
+    return (await res.json()) as SessionResponseBody;
+  }, []);
+
   const start = useCallback(async (notebookId: string, language: string = "en") => {
     if (activeRef.current) return;
     cancelReconnect();
@@ -624,29 +663,13 @@ export function useVoiceSession(): UseVoiceSessionResult {
     currentNotebookIdRef.current = notebookId;
     currentLanguageRef.current = language;
 
-    const res = await fetch(`/api/notebooks/${notebookId}/voice/session`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ language }),
-    });
-
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      let kind: VoiceErrorKind = "session_failed";
-      if (res.status === 401) kind = "unauthorized";
-      else if (res.status === 402) kind = "out_of_credits";
-      else if (res.status === 404) kind = "forbidden";
-      else if (res.status === 429) kind = "rate_limited";
-      else if (res.status === 500 && data.error === "auth_failed") kind = "auth_failed";
-
-      activeRef.current = false;
-      setIsActive(false);
-      setError({ kind, message: data.error ?? "Could not start a voice session.", retryable: res.status === 429 || res.status >= 500 });
-      setState("error");
+    let sessionInfo: SessionResponseBody;
+    try {
+      sessionInfo = await attemptStart(notebookId, language);
+    } catch {
       return;
     }
 
-    const sessionInfo = (await res.json()) as SessionResponseBody;
     sessionInfoRef.current = sessionInfo;
     setToolToken(sessionInfo.toolToken);
     await connect(notebookId, sessionInfo);
@@ -657,7 +680,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
         void renewBlock();
       }, (Number(process.env.NEXT_PUBLIC_VOICE_CREDIT_BLOCK_MINUTES ?? 5)) * 60 * 1000);
     }
-  }, [beginLimits, cancelReconnect, clearBlockTimer, connect, renewBlock]);
+  }, [attemptStart, beginLimits, cancelReconnect, clearBlockTimer, connect, renewBlock]);
 
   const stop = useCallback(async () => {
     activeRef.current = false;
@@ -672,6 +695,11 @@ export function useVoiceSession(): UseVoiceSessionResult {
     setToolRunning(false);
     setError(null);
     setState("idle");
+    if (currentNotebookIdRef.current) {
+      fetch(`/api/notebooks/${currentNotebookIdRef.current}/voice/session`, {
+        method: "DELETE",
+      }).catch(() => {});
+    }
   }, [cancelLimits, cancelReconnect, clearBlockTimer, releaseAudio, releaseSession]);
 
   stopRef.current = stop;

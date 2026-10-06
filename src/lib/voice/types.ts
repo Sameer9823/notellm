@@ -33,6 +33,7 @@ export type VoiceErrorKind =
   | "rate_limited"
   | "connection_failed"
   | "session_failed"
+  | "session_active"
   | "model_unavailable"
   | "forbidden"
   | "unauthorized"
