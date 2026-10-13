@@ -252,7 +252,7 @@ manual setup needed beyond having a reachable Qdrant URL + key.
 | `VOICE_TOKEN_SECRET`                                                                           | *(voice mode)* HMAC secret for signing tool tokens — generate with `openssl rand -base64 32` |
 | `VOICE_TOKEN_TTL_SECONDS`                                                                      | *(voice mode)* Ephemeral token TTL — defaults to `600` (10 min)                  |
 | `VOICE_CREDIT_COST_PER_BLOCK`, `VOICE_CREDIT_BLOCK_MINUTES`                                   | *(voice mode)* Credit cost + duration per voice block                           |
-| `CREDITS_MAX_PER_WINDOW`                                                                       | *(optional)* Credits per user per window — defaults to `50`                      |
+| `CREDITS_MAX_PER_WINDOW`                                                                       | *(optional)* Credits per user per window — defaults to `200`                      |
 | `CREDITS_WINDOW_HOURS`                                                                         | *(optional)* Hours before the credit balance refreshes — defaults to `6`         |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`                                       | Clerk auth                                                                       |
 | `NEXT_PUBLIC_CLERK_SIGN_IN_URL` / `SIGN_UP_URL` / `AFTER_SIGN_IN_URL` / `AFTER_SIGN_UP_URL`   | Clerk redirect routing                                                           |

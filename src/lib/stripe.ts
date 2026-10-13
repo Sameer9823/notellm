@@ -1,15 +1,21 @@
 import Stripe from "stripe";
 
-if (!process.env.STRIPE_SECRET_KEY) {
-  // Don't throw at import time in dev/build without keys configured yet;
-  // any actual Stripe call will fail loudly and obviously instead.
-  console.warn("STRIPE_SECRET_KEY is not set — billing routes will fail.");
-}
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY?.trim();
 
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? "", {
-  // Cast avoids pinning to whatever literal date the installed `stripe`
-  // package's types happen to expect — Stripe accounts default to their
-  // configured API version regardless, so this stays forward-compatible
-  // as the SDK is upgraded.
-  apiVersion: "2025-08-27.basil" as Stripe.LatestApiVersion,
-});
+// Stripe is optional — the app builds, boots, and runs fine without it.
+// Billing/checkout features simply degrade gracefully when the key isn't set.
+export const isStripeConfigured = !!STRIPE_SECRET_KEY;
+
+export const stripe: Stripe | null = STRIPE_SECRET_KEY
+  ? new Stripe(STRIPE_SECRET_KEY, {
+      // Cast avoids pinning to whatever literal date the installed `stripe`
+      // package's types happen to expect — Stripe accounts default to their
+      // configured API version regardless, so this stays forward-compatible
+      // as the SDK is upgraded.
+      apiVersion: "2025-08-27.basil" as Stripe.LatestApiVersion,
+    })
+  : null;
+
+if (!isStripeConfigured) {
+  console.warn("STRIPE_SECRET_KEY is not set — billing routes will be disabled.");
+}

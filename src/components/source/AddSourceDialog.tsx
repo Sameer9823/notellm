@@ -203,12 +203,18 @@ function UrlForm({ placeholder, busy, onSubmit }: { placeholder: string; busy: b
   const [url, setUrl] = useState("");
   return (
     <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (url.trim()) onSubmit(url.trim());
-      }}
-      className="space-y-3"
-    >
+    onSubmit={(e) => {
+      e.preventDefault();
+      const trimmed = url.trim();
+      if (!trimmed) return;
+      // `z.string().url()` rejects scheme-less input like "youtube.com/...",
+      // which the server surfaces as a 400. Normalize bare URLs so pasting a
+      // link without the protocol doesn't fail at the API edge.
+      const normalized = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+      onSubmit(normalized);
+    }}
+    className="space-y-3"
+  >
       <div className="space-y-1.5">
         <Label htmlFor="url">URL</Label>
         <Input id="url" autoFocus placeholder={placeholder} value={url} onChange={(e) => setUrl(e.target.value)} disabled={busy} />

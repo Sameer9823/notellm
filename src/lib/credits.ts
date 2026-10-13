@@ -17,7 +17,7 @@ import { Prisma } from "@prisma/client";
  */
 
 /** Max credits a user has available per window. */
-export const CREDITS_MAX = Number(process.env.CREDITS_MAX_PER_WINDOW ?? 50);
+export const CREDITS_MAX = Number(process.env.CREDITS_MAX_PER_WINDOW ?? 200);
 
 /** Window length in hours before the balance refreshes back to CREDITS_MAX. */
 export const CREDITS_WINDOW_HOURS = Number(process.env.CREDITS_WINDOW_HOURS ?? 6);

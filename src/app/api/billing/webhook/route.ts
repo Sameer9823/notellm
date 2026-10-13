@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
-import { stripe } from "@/lib/stripe";
+import { stripe, isStripeConfigured } from "@/lib/stripe";
 import {
   handleCheckoutCompleted,
   handleInvoicePaid,
@@ -12,6 +12,10 @@ import {
 // middleware, and it's deliberately NOT in middleware.ts's protected-route
 // matcher since Stripe (not a signed-in user) calls it.
 export async function POST(req: Request) {
+  if (!isStripeConfigured || !stripe) {
+    return NextResponse.json({ error: "Stripe is not configured" }, { status: 503 });
+  }
+
   const signature = req.headers.get("stripe-signature");
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 

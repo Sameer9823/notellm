@@ -18,6 +18,7 @@ export type BillingSummary = {
   subscription: SubscriptionDTO;
   packs: CreditPack[];
   plans: SubscriptionPlan[];
+  isStripeConfigured: boolean;
 };
 
 export function useBilling() {

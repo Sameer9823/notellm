@@ -4,11 +4,19 @@ import { CREDIT_PACKS, SUBSCRIPTION_PLANS, findPlanByPriceId } from "@/lib/billi
 import { grantCredits, getPurchasedBalance } from "@/lib/credit-ledger";
 import type Stripe from "stripe";
 
+function requireStripe(): Stripe {
+  if (!stripe) {
+    throw new Error("Stripe is not configured. Set STRIPE_SECRET_KEY to enable billing.");
+  }
+  return stripe;
+}
+
 export async function getOrCreateStripeCustomerId(userId: string, email: string, name: string): Promise<string> {
+  const client = requireStripe();
   const existing = await db.stripeCustomer.findUnique({ where: { userId } });
   if (existing) return existing.stripeCustomerId;
 
-  const customer = await stripe.customers.create({ email, name, metadata: { userId } });
+  const customer = await client.customers.create({ email, name, metadata: { userId } });
   await db.stripeCustomer.create({ data: { userId, stripeCustomerId: customer.id } });
   return customer.id;
 }
@@ -31,7 +39,8 @@ export async function createCheckoutSession(params: {
 
   const customerId = await getOrCreateStripeCustomerId(userId, email, name);
 
-  const session = await stripe.checkout.sessions.create(
+  const client = requireStripe();
+  const session = await client.checkout.sessions.create(
     {
       customer: customerId,
       mode: kind === "pack" ? "payment" : "subscription",
@@ -49,10 +58,11 @@ export async function createCheckoutSession(params: {
 }
 
 export async function createBillingPortalSession(userId: string, appUrl: string) {
+  const client = requireStripe();
   const customer = await db.stripeCustomer.findUnique({ where: { userId } });
   if (!customer) throw new Error("No billing account yet");
 
-  const portal = await stripe.billingPortal.sessions.create({
+  const portal = await client.billingPortal.sessions.create({
     customer: customer.stripeCustomerId,
     return_url: `${appUrl}/dashboard/billing`,
   });

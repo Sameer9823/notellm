@@ -155,7 +155,7 @@ model Notebook {
 // src/lib/credits.ts for the single source of truth on the reset logic.
 model UserCredits {
   userId      String   @id // Clerk user id
-  balance     Int      @default(50)
+  balance     Int      @default(200)
   windowStart DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
