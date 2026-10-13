@@ -1,0 +1,148 @@
+diff --git a/dist/voice/index.js b/dist/voice/index.js
+--- a/dist/voice/index.js
++++ b/dist/voice/index.js
+@@ -1560,6 +1560,44 @@
+             break;
+         }
+       }
++      // --- function calling over WebRTC ---
++      const rtcTools = new Map((options.agent.tools ?? []).map((t) => [t.name, t]));
++      const rtcHandledCalls = new Set();
++      let rtcResponseActive = false;
++      let rtcPendingResponseCreate = false;
++      function rtcRequestResponse() {
++        if (closed || !webrtc) return;
++        if (rtcResponseActive) { rtcPendingResponseCreate = true; return; }
++        webrtc.sendQuiet({ type: "response.create" });
++      }
++      async function handleWebRtcFunctionCall(name, callId, argsJson) {
++        if (closed || !webrtc) return;
++        if (callId) {
++          if (rtcHandledCalls.has(callId)) return;
++          rtcHandledCalls.add(callId);
++        }
++        let args = {};
++        try { args = JSON.parse(argsJson || "{}"); } catch {}
++        emit({ type: "tool-started", toolName: name, args });
++        const tool = rtcTools.get(name);
++        let output;
++        if (!tool) {
++          output = JSON.stringify({ error: `No tool named "${name}" is registered on this session.` });
++        } else {
++          try {
++            const parsedArgs = tool.parameters && typeof tool.parameters.parse === "function" ? tool.parameters.parse(args) : args;
++            const result = await withTimeout(Promise.resolve(tool.execute(parsedArgs)), tool.timeoutMs ?? 3e4, name);
++            output = typeof result === "string" ? result : JSON.stringify(result);
++          } catch (err) {
++            output = JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
++          }
++        }
++        emit({ type: "tool-completed", toolName: name, result: output });
++        if (closed || !webrtc) return;
++        webrtc.sendQuiet({ type: "conversation.item.create", item: { type: "function_call_output", call_id: callId, output } });
++        rtcRequestResponse();
++      }
++
+       function handleRealtimeMessage(raw) {
+         if (closed || !raw || typeof raw !== "object") return;
+         const msg = raw;
+@@ -1606,10 +1644,24 @@
+               engine.handleAssistantStopped();
+             }
+             break;
++          case "response.created":
++            rtcResponseActive = true;
++            break;
++          case "response.function_call_arguments.done":
++            void handleWebRtcFunctionCall(msg.name, msg.call_id, msg.arguments);
++            break;
++          case "response.output_item.done":
++            if (msg.item && msg.item.type === "function_call") {
++              void handleWebRtcFunctionCall(msg.item.name ?? "", msg.item.call_id ?? "", msg.item.arguments ?? "{}");
++            }
++            break;
+           case "response.done":
++            rtcResponseActive = false;
+             handleRealtimeEvent({ type: "response.done" });
++            if (rtcPendingResponseCreate) { rtcPendingResponseCreate = false; rtcRequestResponse(); }
+             break;
+           case "response.cancelled":
++            rtcResponseActive = false;
+             handleRealtimeEvent({ type: "response.cancelled" });
+             break;
+           case "error":
+
+diff --git a/dist/voice/index.cjs b/dist/voice/index.cjs
+--- a/dist/voice/index.cjs
++++ b/dist/voice/index.cjs
+@@ -1610,6 +1610,44 @@
+             break;
+         }
+       }
++      // --- function calling over WebRTC ---
++      const rtcTools = new Map((options.agent.tools ?? []).map((t) => [t.name, t]));
++      const rtcHandledCalls = new Set();
++      let rtcResponseActive = false;
++      let rtcPendingResponseCreate = false;
++      function rtcRequestResponse() {
++        if (closed || !webrtc) return;
++        if (rtcResponseActive) { rtcPendingResponseCreate = true; return; }
++        webrtc.sendQuiet({ type: "response.create" });
++      }
++      async function handleWebRtcFunctionCall(name, callId, argsJson) {
++        if (closed || !webrtc) return;
++        if (callId) {
++          if (rtcHandledCalls.has(callId)) return;
++          rtcHandledCalls.add(callId);
++        }
++        let args = {};
++        try { args = JSON.parse(argsJson || "{}"); } catch {}
++        emit({ type: "tool-started", toolName: name, args });
++        const tool = rtcTools.get(name);
++        let output;
++        if (!tool) {
++          output = JSON.stringify({ error: `No tool named "${name}" is registered on this session.` });
++        } else {
++          try {
++            const parsedArgs = tool.parameters && typeof tool.parameters.parse === "function" ? tool.parameters.parse(args) : args;
++            const result = await withTimeout(Promise.resolve(tool.execute(parsedArgs)), tool.timeoutMs ?? 3e4, name);
++            output = typeof result === "string" ? result : JSON.stringify(result);
++          } catch (err) {
++            output = JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
++          }
++        }
++        emit({ type: "tool-completed", toolName: name, result: output });
++        if (closed || !webrtc) return;
++        webrtc.sendQuiet({ type: "conversation.item.create", item: { type: "function_call_output", call_id: callId, output } });
++        rtcRequestResponse();
++      }
++
+       function handleRealtimeMessage(raw) {
+         if (closed || !raw || typeof raw !== "object") return;
+         const msg = raw;
+@@ -1656,10 +1694,24 @@
+               engine.handleAssistantStopped();
+             }
+             break;
++          case "response.created":
++            rtcResponseActive = true;
++            break;
++          case "response.function_call_arguments.done":
++            void handleWebRtcFunctionCall(msg.name, msg.call_id, msg.arguments);
++            break;
++          case "response.output_item.done":
++            if (msg.item && msg.item.type === "function_call") {
++              void handleWebRtcFunctionCall(msg.item.name ?? "", msg.item.call_id ?? "", msg.item.arguments ?? "{}");
++            }
++            break;
+           case "response.done":
++            rtcResponseActive = false;
+             handleRealtimeEvent({ type: "response.done" });
++            if (rtcPendingResponseCreate) { rtcPendingResponseCreate = false; rtcRequestResponse(); }
+             break;
+           case "response.cancelled":
++            rtcResponseActive = false;
+             handleRealtimeEvent({ type: "response.cancelled" });
+             break;
+           case "error":
+

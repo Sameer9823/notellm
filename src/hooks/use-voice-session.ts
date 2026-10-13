@@ -325,12 +325,15 @@ export function useVoiceSession(): UseVoiceSessionResult {
           break;
 
         case "assistant-transcript-delta": {
+          const prevId = streamingRef.current.assistant;
           const id = (streamingRef.current.assistant ??= nextEntryId());
           assistantTextRef.current += event.delta;
+          const isNew = prevId === undefined || prevId !== id;
+          const stashed = isNew && assistantCitationsRef.current?.length ? assistantCitationsRef.current : undefined;
           setTranscript((prev) =>
             prev.some((entry) => entry.id === id)
               ? prev.map((entry) => (entry.id === id ? { ...entry, text: entry.text + event.delta } : entry))
-              : [...prev, { id, role: "assistant", text: event.delta, status: "streaming", startedAt: Date.now() }]
+              : [...prev, { id, role: "assistant", text: event.delta, status: "streaming", startedAt: Date.now(), citations: stashed }]
           );
           break;
         }
@@ -378,28 +381,35 @@ export function useVoiceSession(): UseVoiceSessionResult {
 
         case "tool-started":
           setToolRunning(true);
+          if (process.env.NODE_ENV === "development") {
+            console.debug("[voice] tool-started", event.toolName);
+          }
+          setState((prev) => (prev === "assistant_speaking" || prev === "user_speaking" ? prev : "thinking"));
           break;
 
         case "tool-completed":
           setToolRunning(false);
+          if (process.env.NODE_ENV === "development") {
+            console.debug("[voice] tool-completed", event.toolName);
+          }
           try {
             const result = JSON.parse((event as { result?: unknown }).result as string) as { results?: Array<{ chunkId?: string; sourceId?: string; sourceTitle?: string; sourceType?: string; page?: number; startSec?: number; endSec?: number; text?: string; url?: string; marker?: number }> };
             if (result.results?.length) {
-              const citations = result.results.map((r, idx) => ({
-                marker: idx + 1,
-                chunkId: r.chunkId ?? "",
-                sourceId: r.sourceId ?? "",
-                sourceTitle: r.sourceTitle ?? "",
-                sourceType: r.sourceType ?? "",
-                page: r.page,
-                startSec: r.startSec,
-                endSec: r.endSec,
-                snippet: (r.text ?? "").slice(0, 220),
-                url: r.url ?? null,
-              }));
+               const citations = result.results.map((r, idx) => ({
+                 marker: r.marker ?? idx + 1,
+                 chunkId: r.chunkId ?? "",
+                 sourceId: r.sourceId ?? "",
+                 sourceTitle: r.sourceTitle ?? "",
+                 sourceType: r.sourceType ?? "",
+                 page: r.page ?? undefined,
+                 startSec: r.startSec ?? undefined,
+                 endSec: r.endSec ?? undefined,
+                 snippet: (r.text ?? "").slice(0, 220),
+                 url: r.url ?? null,
+               }));
+              assistantCitationsRef.current = citations;
               const assistantId = streamingRef.current.assistant;
               if (assistantId) {
-                assistantCitationsRef.current = citations;
                 setTranscript((prev) =>
                   prev.map((entry) => (entry.id === assistantId ? { ...entry, citations } : entry))
                 );
