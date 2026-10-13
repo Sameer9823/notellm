@@ -41,7 +41,10 @@ async function ensureEnglishCues(cues: Cue[]): Promise<{ cues: Cue[]; language: 
  * upload request, and reports live progress through Redis for polling.
  */
 export async function runIngestPipeline(sourceId: string) {
-  const source = await db.source.findUnique({ where: { id: sourceId } });
+  const source = await db.source.findUnique({
+    where: { id: sourceId },
+    include: { sourceFile: true },
+  });
   if (!source) return;
 
   try {
@@ -76,20 +79,21 @@ export async function runIngestPipeline(sourceId: string) {
       chunkRows.map((r) => ({
         id: r.id,
         vector: r.vector,
-        payload: {
-          notebookId: source.notebookId,
-          sourceId: source.id,
-          sourceTitle: resolvedTitle,
-          sourceType: source.type,
-          chunkId: r.id,
-          index: r.chunk.index,
-          content: r.chunk.content,
-          page: r.chunk.page,
-          startSec: r.chunk.startSec,
-          endSec: r.chunk.endSec,
-          startChar: r.chunk.startChar,
-          endChar: r.chunk.endChar,
-        },
+         payload: {
+           notebookId: source.notebookId,
+           sourceId: source.id,
+           sourceTitle: resolvedTitle,
+           sourceType: source.type,
+           chunkId: r.id,
+           index: r.chunk.index,
+           content: r.chunk.content,
+           page: r.chunk.page,
+           startSec: r.chunk.startSec,
+           endSec: r.chunk.endSec,
+           startChar: r.chunk.startChar,
+           endChar: r.chunk.endChar,
+           originUrl: source.originUrl ?? undefined,
+         },
       }))
     );
 
@@ -148,7 +152,7 @@ async function fetchStoredFile(url: string): Promise<Buffer> {
 }
 
 async function extractAndChunk(
-  source: Source
+  source: Source & { sourceFile?: { data: Uint8Array } | null }
 ): Promise<{ chunks: TextChunk[]; metadata: Record<string, unknown> }> {
   switch (source.type) {
     case "TEXT": {
@@ -169,11 +173,18 @@ async function extractAndChunk(
     }
     case "PDF": {
       // Prefer the Cloudinary-hosted original (storagePath) when present;
-      // fall back to the legacy base64-in-rawText path for sources created
-      // before Cloudinary was wired in, or when it isn't configured.
-      const buffer = source.storagePath
-        ? await fetchStoredFile(source.storagePath)
-        : Buffer.from(source.rawText ?? "", "base64"); // rawText temporarily holds base64 during UPLOADING
+      // fall back to the SourceFile table (local bytes from the fallback
+      // upload path) when storagePath is null; as a last resort decode the
+      // transient base64 rawText (legacy sources created before either path
+      // existed, where the PDF was only ever available via rawText).
+      let buffer: Buffer;
+      if (source.storagePath) {
+        buffer = await fetchStoredFile(source.storagePath);
+      } else if (source.sourceFile?.data) {
+        buffer = Buffer.from(source.sourceFile.data);
+      } else {
+        buffer = Buffer.from(source.rawText ?? "", "base64");
+      }
       const result = await extractPdf(buffer);
       const chunks = chunkPages(result.pages);
       return {

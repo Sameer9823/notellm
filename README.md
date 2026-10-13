@@ -54,7 +54,10 @@ src/
       sources/[id]/                    delete
       sources/[id]/reindex/            re-run the ingest pipeline
       sources/[id]/status/             fast polling endpoint (Redis-backed)
-      sources/[id]/content/            full chunk list for the source viewer
+       sources/[id]/content/            full chunk list for the source viewer
+       sources/[id]/file/                streamed original file (PDF) for the viewer
+       web-preview?url=                   SSRF-protected check: does this page allow iframe embedding?
+       web-preview/snapshot               lazy screenshot generation (Firecrawl → Cloudinary cache)
       notes/[id]/                      update/delete a single note
       public/notebooks/[slug]/         read-only fetch for shared notebooks
       credits/                         current user's credit balance/refresh time
@@ -257,6 +260,7 @@ manual setup needed beyond having a reachable Qdrant URL + key.
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`                                       | Clerk auth                                                                       |
 | `NEXT_PUBLIC_CLERK_SIGN_IN_URL` / `SIGN_UP_URL` / `AFTER_SIGN_IN_URL` / `AFTER_SIGN_UP_URL`   | Clerk redirect routing                                                           |
 | `NEXT_PUBLIC_APP_URL`                                                                          | Used for absolute links where needed (e.g. share links)                          |
+| `FIRECRAWL_API_KEY`                                                                           | *(optional)* Used by the Studio panel to screenshot non-embeddable web pages — falls back to reader view when unset |
 
 ### Deployment
 

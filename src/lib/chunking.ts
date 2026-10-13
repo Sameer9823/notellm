@@ -34,11 +34,18 @@ export type TextChunk = {
   endSec?: number;
 };
 
-const SENTENCE_BOUNDARY = /(?<=[.!?。！？])\s+/;
+const SENTENCE_BOUNDARY = /(?<=[.!?。！？])[ \t]+/;
 
-/** Splits flat text into overlapping, sentence-respecting chunks with char offsets. */
+/** Splits flat text into overlapping, sentence-respecting chunks with char offsets.
+ *  Paragraph breaks (\n\n) are preserved so chunk content keeps meaningful
+ *  structure instead of flattening everything into one run-on line. */
 export function chunkPlainText(text: string): TextChunk[] {
-  const clean = text.replace(/\r\n/g, "\n").trim();
+  const clean = text
+    .replace(/\r\n/g, "\n")
+    .replace(/([ \t])+/g, "$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/([^\n])[ \t]*\n([^\n])/g, "$1 $2")
+    .trim();
   if (!clean) return [];
 
   const sentences: { text: string; start: number }[] = [];

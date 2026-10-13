@@ -21,6 +21,7 @@ export interface TranscriptEntry {
     startSec?: number;
     endSec?: number;
     snippet: string;
+    url?: string | null;
   }>;
 }
 

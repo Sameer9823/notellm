@@ -47,6 +47,10 @@ export function useAddSource(notebookId: string, onAdded: () => void) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || "Failed to upload file");
       }
+      const result = await res.json();
+      if (result.warning) {
+        toast.warning(result.warning);
+      }
       toast.success("Source uploaded — indexing now");
       onAdded();
       return true;

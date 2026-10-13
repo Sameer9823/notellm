@@ -47,6 +47,7 @@ export type ChunkPayload = {
   endSec?: number;
   startChar?: number;
   endChar?: number;
+  originUrl?: string;
 };
 
 export async function upsertChunks(points: { id: string; vector: number[]; payload: ChunkPayload }[]) {

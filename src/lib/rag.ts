@@ -190,8 +190,8 @@ export function extractCitations(answerText: string, chunks: RetrievedChunk[]) {
       page: c.page,
       startSec: c.startSec,
       endSec: c.endSec,
-      snippet: c.content.slice(0, 220),
-      url: c.url,
-    };
+       snippet: c.content.slice(0, 220),
+       url: c.url ?? c.originUrl ?? undefined,
+     };
   });
 }

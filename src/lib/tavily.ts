@@ -23,6 +23,13 @@ export function tavilyEnabled(): boolean {
   return Boolean(process.env.TAVILY_API_KEY);
 }
 
+/** Client-safe check — uses a NEXT_PUBLIC_ env var so the browser can
+ *  conditionally register the search_web voice tool without exposing the
+ *  actual TAVILY_API_KEY. Both must be set together. */
+export function tavilyEnabledPublic(): boolean {
+  return Boolean(process.env.NEXT_PUBLIC_TAVILY_ENABLED);
+}
+
 export async function tavilySearch(query: string, maxResults = 6): Promise<TavilySearchResult[]> {
   const apiKey = process.env.TAVILY_API_KEY;
   if (!apiKey) {

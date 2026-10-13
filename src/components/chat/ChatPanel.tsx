@@ -39,25 +39,26 @@ export const ChatPanel = forwardRef<ChatPanelHandle, {
   const [busy, setBusy] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
 
-  useEffect(() => {
-    if (!voiceOpen) return;
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { sourceId: string; chunkId: string; page?: number | null; startSec?: number | null; endSec?: number | null };
-      onOpenCitation({
-        marker: 0,
-        chunkId: detail.chunkId,
-        sourceId: detail.sourceId,
-        sourceTitle: "",
-        sourceType: "TEXT",
-        page: detail.page ?? null,
-        startSec: detail.startSec ?? null,
-        endSec: detail.endSec ?? null,
-        snippet: "",
-      });
-    };
-    window.addEventListener("voice:open-citation", handler as EventListener);
-    return () => window.removeEventListener("voice:open-citation", handler as EventListener);
-  }, [voiceOpen, onOpenCitation]);
+   useEffect(() => {
+     if (!voiceOpen) return;
+     const handler = (e: Event) => {
+       const detail = (e as CustomEvent).detail as Citation;
+       onOpenCitation({
+         marker: detail.marker ?? 0,
+         chunkId: detail.chunkId,
+         sourceId: detail.sourceId,
+         sourceTitle: detail.sourceTitle ?? "",
+         sourceType: (detail.sourceType as Citation["sourceType"]) ?? "TEXT",
+         page: detail.page ?? null,
+         startSec: detail.startSec ?? null,
+         endSec: detail.endSec ?? null,
+         snippet: detail.snippet ?? "",
+         url: detail.url ?? undefined,
+       });
+     };
+     window.addEventListener("voice:open-citation", handler as EventListener);
+     return () => window.removeEventListener("voice:open-citation", handler as EventListener);
+   }, [voiceOpen, onOpenCitation]);
   // Persists across messages in this session (not saved server-side) —
   // mirrors ChatGPT's web-browsing toggle: once turned on, every question
   // asked in this chat pulls in live web results alongside notebook context,

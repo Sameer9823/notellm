@@ -9,7 +9,7 @@ export interface VoiceTranscriptProps {
   agentName: string;
   actions?: ReactNode;
   composer?: ReactNode;
-  onOpenCitation?: (citation: { sourceId: string; chunkId: string; page?: number | null; startSec?: number | null; endSec?: number | null }) => void;
+  onOpenCitation?: (citation: { sourceId: string; chunkId: string; sourceTitle: string; sourceType: string; page?: number | null; startSec?: number | null; endSec?: number | null; snippet: string; url?: string | null; marker: number }) => void;
 }
 
 function formatTime(ms: number): string {
@@ -65,7 +65,7 @@ export function VoiceTranscript({ entries, agentName, actions, composer, onOpenC
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {entry.citations.map((c) => (
                     <CitationChip
-                      key={c.marker}
+                      key={`${c.marker}-${c.chunkId}`}
                       citation={{
                         marker: c.marker,
                         chunkId: c.chunkId,
@@ -76,14 +76,20 @@ export function VoiceTranscript({ entries, agentName, actions, composer, onOpenC
                         startSec: c.startSec ?? null,
                         endSec: c.endSec ?? null,
                         snippet: c.snippet,
+                        url: c.url ?? null,
                       }}
                       onOpen={(citation) => {
                         onOpenCitation?.({
-                          sourceId: citation.sourceId,
+                          marker: citation.marker,
                           chunkId: citation.chunkId,
+                          sourceId: citation.sourceId,
+                          sourceTitle: citation.sourceTitle,
+                          sourceType: citation.sourceType,
                           page: citation.page,
                           startSec: citation.startSec,
                           endSec: citation.endSec,
+                          snippet: citation.snippet,
+                          url: citation.url,
                         });
                       }}
                     />

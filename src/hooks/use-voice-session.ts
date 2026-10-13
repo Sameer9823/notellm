@@ -383,7 +383,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
         case "tool-completed":
           setToolRunning(false);
           try {
-            const result = JSON.parse((event as { result?: unknown }).result as string) as { results?: Array<{ chunkId?: string; sourceId?: string; sourceTitle?: string; sourceType?: string; page?: number; startSec?: number; endSec?: number; text?: string }> };
+            const result = JSON.parse((event as { result?: unknown }).result as string) as { results?: Array<{ chunkId?: string; sourceId?: string; sourceTitle?: string; sourceType?: string; page?: number; startSec?: number; endSec?: number; text?: string; url?: string; marker?: number }> };
             if (result.results?.length) {
               const citations = result.results.map((r, idx) => ({
                 marker: idx + 1,
@@ -395,6 +395,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
                 startSec: r.startSec,
                 endSec: r.endSec,
                 snippet: (r.text ?? "").slice(0, 220),
+                url: r.url ?? null,
               }));
               const assistantId = streamingRef.current.assistant;
               if (assistantId) {

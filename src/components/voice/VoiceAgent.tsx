@@ -21,8 +21,19 @@ export function VoiceAgentScreen({ notebookId, onClose }: { notebookId: string; 
     }
   }, [notebookId, session, language]);
 
-  const handleOpenCitation = useCallback((c: { sourceId: string; chunkId: string; page?: number | null; startSec?: number | null; endSec?: number | null }) => {
-    window.dispatchEvent(new CustomEvent("voice:open-citation", { detail: c }));
+  const handleOpenCitation = useCallback((citation: {
+    marker: number;
+    chunkId: string;
+    sourceId: string;
+    sourceTitle: string;
+    sourceType: string;
+    page?: number | null;
+    startSec?: number | null;
+    endSec?: number | null;
+    snippet: string;
+    url?: string | null;
+  }) => {
+    window.dispatchEvent(new CustomEvent("voice:open-citation", { detail: citation }));
   }, []);
 
   return (

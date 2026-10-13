@@ -38,9 +38,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const contentType = req.headers.get("content-type") || "";
   let source;
-  // Only spent once the request is known-valid, right before the source row
-  // (and the indexing work it triggers) is actually created — a malformed
-  // upload shouldn't cost the user a credit.
+  let uploadWarning: string | null = null;
   let spendStatus: Awaited<ReturnType<typeof consumeCredits>>["status"] | null = null;
 
   if (contentType.includes("multipart/form-data")) {
@@ -62,13 +60,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const buffer = Buffer.from(await file.arrayBuffer());
 
-    // When Cloudinary is configured, upload the original file there and
-    // keep only its URL — avoids stuffing a base64-encoded PDF (up to
-    // ~33MB for a 25MB file) into the `rawText` Postgres column. The
-    // ingest pipeline fetches the buffer back from `storagePath`. Falls
-    // back to the original base64-in-rawText flow when Cloudinary isn't
-    // configured, or if the upload itself fails (upload errors shouldn't
-    // block adding the source — ingest will just use the fallback).
     let storagePath: string | null = null;
     let storagePublicId: string | null = null;
     let rawText: string | null = type === "VTT" ? buffer.toString("utf-8") : null;
@@ -85,14 +76,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn(`[sources] Cloudinary upload failed for ${file.name}, falling back to inline storage:`, err);
+        uploadWarning = "Couldn't upload to Cloudinary — the original file is stored locally as a fallback and may need re-uploading later.";
       }
     }
 
-    if (type === "PDF" && !storagePath) {
-      // Fallback: no Cloudinary (or the upload failed) — encode inline like
-      // before, temporarily, until the ingest pipeline consumes and
-      // replaces it with a short extracted-text preview.
-      rawText = buffer.toString("base64");
+    if (type === "PDF" && !storagePath && !cloudinaryEnabled()) {
+      // Warning for local-dev / no-Cloudinary setups: the file is stored in
+      // SourceFile as a fallback, but the user should know the PDF viewer
+      // won't have a Cloudinary CDN URL.
+      uploadWarning = "Cloudinary isn't configured — the original PDF is stored locally as a fallback and may need re-uploading after ingest.";
     }
 
     source = await db.source.create({
@@ -107,6 +99,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         fileSizeBytes: file.size,
       },
     });
+
+    // Persist the original file bytes in SourceFile when there's no Cloudinary
+    // storagePath, so /api/sources/[id]/file can serve the PDF and the ingest
+    // pipeline can re-extract without relying on the transient base64-in-rawText.
+    if (type === "PDF" && !storagePath) {
+      await db.sourceFile.create({
+        data: { sourceId: source.id, data: buffer },
+      });
+    }
   } else {
     const body = await req.json().catch(() => null);
     const parsed = jsonSchema.safeParse(body);
@@ -155,7 +156,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   return NextResponse.json(
-    { source },
+    { source, warning: uploadWarning },
     {
       status: 201,
       headers: spendStatus

@@ -61,6 +61,11 @@ export const RATE_LIMITS = {
   // Tavily search — cheap relative to actually adding sources, but still
   // metered separately so it can't be hammered to probe the query API.
   webSearch: { limit: 15, windowSec: 60 },
+   // Web preview embeddability check + reader extraction — each is an
+   // outbound fetch, so cap per-user to avoid abuse as an SSRF oracle.
+   webPreview: { limit: 15, windowSec: 60 },
+   // Screenshot generation — expensive external API + bandwidth.
+   screenshot: { limit: 5, windowSec: 60 },
   memoryWrite: { limit: 20, windowSec: 60 },
 } as const;
 

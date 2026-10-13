@@ -262,7 +262,13 @@ model Source {
   // to the old base64-in-rawText flow) or for non-file source types.
   storagePath   String?
   storagePublicId String?
-  rawText       String?      @db.Text // for TEXT sources, or extracted plain text cache (preview)
+   rawText       String?      @db.Text // for TEXT sources, or extracted plain text cache (preview)
+
+   // Screenshot snapshot of a URL source's web page, stored on Cloudinary.
+   // Generated lazily on first click in the Studio panel (not at ingest)
+   // when the site blocks embedding. NULL means no snapshot has been taken.
+   snapshotUrl       String?
+   snapshotPublicId  String?
 
   // Metadata
   fileSizeBytes Int?
@@ -279,8 +285,27 @@ model Source {
 
   chunks        Chunk[]
 
+  sourceFile    SourceFile?
+
   @@index([notebookId])
   @@index([status])
+}
+
+/// Fallback binary storage for original PDF/VTT uploads when Cloudinary
+/// isn't configured or its upload fails. Keeps the file bytes in Postgres
+/// so the ingest pipeline and /api/sources/[id]/file can still access the
+/// original — previously the bytes were base64-encoded into `rawText` and
+/// discarded after ingest, losing the file entirely. Cascade-deleting with
+/// the Source keeps this in sync with the parent row.
+model SourceFile {
+  id        String   @id @default(cuid())
+  sourceId  String   @unique
+  source    Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  data      Bytes
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sourceId])
 }
 
 model Chunk {

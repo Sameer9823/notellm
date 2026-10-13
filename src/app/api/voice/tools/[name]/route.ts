@@ -3,7 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { verifyToolToken } from "@/lib/voice/server-config";
-import { createSearchNotebookTool, TOOL_NAMES } from "@/lib/voice/tools/registry";
+import { TOOL_NAMES, createToolByName } from "@/lib/voice/tools/registry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,7 +55,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ nam
   }
 
   try {
-    const tool = createSearchNotebookTool(notebookId);
+    const tool = createToolByName(name, notebookId);
+    if (!tool) return toolRefused(404, `Tool "${name}" is not registered on the server.`);
     const result = await tool.execute(parsed.data);
     console.log(`[voice/tools/${name}] notebookId=${notebookId} resultLen=${String(result).length}`);
     return NextResponse.json({ ok: true, result, sessionId });

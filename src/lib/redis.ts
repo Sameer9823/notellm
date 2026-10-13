@@ -140,3 +140,25 @@ export async function getArtifactProgress(artifactId: string): Promise<ArtifactP
     return null;
   }
 }
+
+/** Ephemeral cache for web-page screenshot URLs (keyed by URL hash).
+ *  TTL ~7 days — screenshots are reused across sessions for the same page.
+ *  Only used for WEB citations (no Source row to persist to). */
+const snapshotCacheKey = (urlHash: string) => `snapshot:${urlHash}`;
+const SNAPSHOT_CACHE_TTL = 60 * 60 * 24 * 7; // 7 days
+
+export async function getCachedSnapshotUrl(urlHash: string): Promise<string | null> {
+  try {
+    return await redis.get(snapshotCacheKey(urlHash));
+  } catch {
+    return null;
+  }
+}
+
+export async function setCachedSnapshotUrl(urlHash: string, url: string): Promise<void> {
+  try {
+    await redis.set(snapshotCacheKey(urlHash), url, "EX", SNAPSHOT_CACHE_TTL);
+  } catch {
+    // cache miss on subsequent loads — non-fatal
+  }
+}

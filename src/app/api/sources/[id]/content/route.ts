@@ -12,6 +12,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     include: {
       notebook: { select: { ownerId: true } },
       chunks: { orderBy: { index: "asc" } },
+      sourceFile: { select: { id: true } },
     },
   });
 
@@ -31,6 +32,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       durationSec: source.durationSec,
       language: source.language,
       metadata: source.metadata,
+      hasFile: source.type === "PDF" && (!!source.storagePath || !!source.sourceFile),
     },
     chunks: source.chunks.map(
       (c: {

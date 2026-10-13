@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { redis } from "@/lib/redis";
 import { consumeCredits, creditsExhaustedResponse } from "@/lib/credits";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { tavilyEnabled } from "@/lib/tavily";
 import { createRealtimeClientSecret } from "samai-sdk/voice";
 import { OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_REALTIME_MODEL, OPENAI_REALTIME_VOICE, VOICE_TOKEN_SECRET, VOICE_TOKEN_TTL_SECONDS, VOICE_CREDIT_COST_PER_BLOCK, VOICE_CREDIT_BLOCK_MINUTES, signToolToken } from "@/lib/voice/server-config";
 
@@ -119,7 +120,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const sourceList = sources.map((s: { title: string }) => `- ${s.title}`).join("\n") || "No sources indexed yet.";
 
-  let instructions = `You are the voice assistant for the notebook "${notebook.title}". The user has these sources:\n${sourceList}\n- Answer ONLY from results returned by the search_notebook tool. Always call it before answering a factual question about the sources.\n- Before calling search_notebook, say "Let me check your sources."\n- If the tool returns no relevant passages, say you don't have enough in their sources. Never guess or use outside knowledge.\n- Keep answers short and conversational (1-3 sentences). You are speaking, not writing: no lists, no markdown, no URLs.\n- Mention where an answer comes from naturally ("on page 12", "around the 14 minute mark in the second video").\n- If interrupted, stop and respond to the new input.\n- Respond in ${language}.`;
+  let instructions = `You are the voice assistant for the notebook "${notebook.title}". The user has these sources:\n${sourceList}`;
+
+  if (tavilyEnabled()) {
+    instructions += `\n- You also have a search_web tool that searches live web results. Use it when the user asks something not covered by their notebook sources, or when they need the latest information on a topic.`;
+  }
+
+  instructions += `\n- Answer ONLY from results returned by search_notebook (or search_web when used). Always call search_notebook first before answering a factual question about the sources.\n- Before calling search_notebook, say "Let me check your sources."\n- Each search result is numbered [1], [2], etc. When you use a passage in your answer, briefly mention the source number (e.g. "According to source 1, …") so the user can find the cited passage.\n- If a tool returns no relevant passages, say you don't have enough in their sources (or the web for search_web). Never guess or use outside knowledge.\n- Keep answers short and conversational (1-3 sentences). You are speaking, not writing: no lists, no markdown, no URLs.\n- Mention where an answer comes from naturally ("on page 12", "around the 14 minute mark in the second video").\n- If interrupted, stop and respond to the new input.\n- Respond in ${language}.`;
 
   if (isRefresh) {
     const recent = await db.message.findMany({

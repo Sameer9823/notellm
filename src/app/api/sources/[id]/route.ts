@@ -46,13 +46,18 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   await deleteBySource(id).catch(() => undefined);
   await db.source.delete({ where: { id } });
 
-  // Best-effort cleanup of the Cloudinary-stored original file — an
-  // orphaned asset costs storage, not correctness, so this never blocks
-  // the response.
+  // Best-effort cleanup of Cloudinary assets. An orphaned asset costs
+  // storage, not correctness, so these never block the response.
   if (source.storagePublicId) {
     destroyAsset(source.storagePublicId, "raw").catch((err) => {
       // eslint-disable-next-line no-console
       console.warn(`[sources] Failed to delete Cloudinary asset ${source.storagePublicId}:`, err);
+    });
+  }
+  if (source.snapshotPublicId) {
+    destroyAsset(source.snapshotPublicId, "image").catch((err) => {
+      // eslint-disable-next-line no-console
+      console.warn(`[sources] Failed to delete Cloudinary snapshot ${source.snapshotPublicId}:`, err);
     });
   }
 

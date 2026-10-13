@@ -89,6 +89,11 @@
       linear-gradient(90deg, hsl(var(--border) / 0.35) 1px, transparent 1px);
     background-size: 32px 32px;
   }
+  .pdf-cite-highlight {
+    background: hsl(var(--primary) / 0.35);
+    color: inherit;
+    border-radius: 2px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

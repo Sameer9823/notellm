@@ -20,6 +20,7 @@ const saveSchema = z.object({
       startSec: z.number().nullable().optional(),
       endSec: z.number().nullable().optional(),
       snippet: z.string(),
+      url: z.string().url().nullable().optional(),
     })
   ).optional().nullable(),
 });

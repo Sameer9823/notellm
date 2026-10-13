@@ -15,6 +15,7 @@ const saveSchema = z.object({
       startSec: z.number().nullable().optional(),
       endSec: z.number().nullable().optional(),
       snippet: z.string(),
+      url: z.string().url().nullable().optional(),
     })
   ).optional().nullable(),
 });
@@ -35,6 +36,7 @@ describe("voice messages schema", () => {
           startSec: null,
           endSec: null,
           snippet: "the answer is 42",
+          url: null,
         },
       ],
     };
@@ -44,5 +46,43 @@ describe("voice messages schema", () => {
   it("rejects missing required fields", () => {
     const bad = { role: "USER", content: "" };
     expect(saveSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it("validates WEB citation with url", () => {
+    const good = {
+      role: "ASSISTANT",
+      content: "The capital of France is Paris.",
+      citations: [
+        {
+          marker: 1,
+          chunkId: "web:https://example.com:0",
+          sourceId: "web:https://example.com",
+          sourceTitle: "France Capital",
+          sourceType: "WEB",
+          snippet: "The capital of France is Paris.",
+          url: "https://example.com",
+        },
+      ],
+    };
+    expect(saveSchema.safeParse(good).success).toBe(true);
+  });
+
+  it("validates URL citation with originUrl as url", () => {
+    const good = {
+      role: "ASSISTANT",
+      content: "According to the article...",
+      citations: [
+        {
+          marker: 1,
+          chunkId: "chunk_2",
+          sourceId: "src_2",
+          sourceTitle: "Article Title",
+          sourceType: "URL",
+          snippet: "key passage from the article",
+          url: "https://example.com/article",
+        },
+      ],
+    };
+    expect(saveSchema.safeParse(good).success).toBe(true);
   });
 });
