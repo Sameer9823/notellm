@@ -28,8 +28,19 @@ export async function ensureCollection() {
       vectors: { size: EMBEDDING_DIM, distance: "Cosine" },
       optimizers_config: { default_segment_number: 2 },
     });
-    await qdrant.createPayloadIndex(COLLECTION, { field_name: "notebookId", field_schema: "keyword" });
-    await qdrant.createPayloadIndex(COLLECTION, { field_name: "sourceId", field_schema: "keyword" });
+  }
+  // Always attempt each index — even if the collection already existed, the
+  // indexes may not (e.g. createCollection succeeded but createPayloadIndex
+  // failed on a transient network error, and the module-level `ensured` flag
+  // prevented a retry). Ignoring "already exists" errors makes this safe to
+  // call repeatedly.
+  for (const field of ["notebookId", "sourceId"]) {
+    try {
+      await qdrant.createPayloadIndex(COLLECTION, { field_name: field, field_schema: "keyword" });
+    } catch (err) {
+      // 409 / already-exists is expected on subsequent calls — ignore.
+      if (!(err instanceof Error && /already exist/i.test(err.message))) throw err;
+    }
   }
   ensured = true;
 }
@@ -73,6 +84,21 @@ export async function deleteBySource(sourceId: string) {
   await qdrant.delete(COLLECTION, {
     wait: true,
     filter: { must: [{ key: "sourceId", match: { value: sourceId } }] },
+  });
+}
+
+/** Deletes Qdrant points for a source but preserves the given ids — used by the
+ *  reindex pipeline so new vectors are upserted first, Postgres is swapped
+ *  in a transaction, and only then are the old points removed (minus the new
+ *  ones). On any mid-reindex failure the previous working index survives. */
+export async function deleteBySourceExcept(sourceId: string, exceptIds: string[]) {
+  await ensureCollection();
+  await qdrant.delete(COLLECTION, {
+    wait: true,
+    filter: {
+      must: [{ key: "sourceId", match: { value: sourceId } }],
+      must_not: [{ has_id: exceptIds }],
+    },
   });
 }
 
@@ -125,7 +151,12 @@ async function ensureMemoryCollection() {
       vectors: { size: EMBEDDING_DIM, distance: "Cosine" },
       optimizers_config: { default_segment_number: 1 }, // small collection — no need for multiple segments
     });
+  }
+  // Always attempt the index — see ensureCollection() above for rationale.
+  try {
     await qdrant.createPayloadIndex(MEMORY_COLLECTION, { field_name: "userId", field_schema: "keyword" });
+  } catch (err) {
+    if (!(err instanceof Error && /already exist/i.test(err.message))) throw err;
   }
   memoryCollectionEnsured = true;
 }

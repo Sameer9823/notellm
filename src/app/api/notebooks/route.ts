@@ -1,19 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 
 export async function GET() {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const notebooks = await db.notebook.findMany({
-    where: { ownerId: userId },
-    orderBy: { updatedAt: "desc" },
-    include: { _count: { select: { sources: true } } },
-  });
+  try {
+    const notebooks = await db.notebook.findMany({
+      where: { ownerId: userId },
+      orderBy: { updatedAt: "desc" },
+      include: { _count: { select: { sources: true } } },
+    });
 
-  return NextResponse.json({ notebooks });
+    return NextResponse.json({ notebooks });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && (err.code === "P1001" || err.code === "P2021")) {
+      // Database unreachable or tables don't exist yet — return an empty list
+      // so the dashboard renders instead of crashing.
+      return NextResponse.json({ notebooks: [] });
+    }
+    throw err;
+  }
 }
 
 const createSchema = z.object({

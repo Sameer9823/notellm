@@ -290,9 +290,14 @@ function ArtifactViewer({ artifact, notebookId }: { artifact: ArtifactDTO; noteb
     return <div className="text-xs text-muted-foreground">This artifact isn&apos;t ready yet.</div>;
   }
 
+  const NoContent = () => (
+    <div className="text-xs text-muted-foreground">This artifact has no content, please regenerate.</div>
+  );
+
   switch (artifact.type) {
     case "SUMMARY": {
-      const content = artifact.content as { markdown: string };
+      const content = artifact.content as { markdown?: string } | null;
+      if (!content?.markdown) return <NoContent />;
       return (
         <div className="prose prose-sm prose-invert max-w-none">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.markdown}</ReactMarkdown>
@@ -300,10 +305,12 @@ function ArtifactViewer({ artifact, notebookId }: { artifact: ArtifactDTO; noteb
       );
     }
     case "TAKEAWAYS": {
-      const content = artifact.content as { items: string[] };
+      const content = artifact.content as { items?: string[] } | null;
+      const items = content?.items ?? [];
+      if (!items.length) return <NoContent />;
       return (
         <ul className="space-y-2">
-          {content.items.map((item, i) => (
+          {items.map((item, i) => (
             <li key={i} className="flex gap-2 rounded-lg border border-border bg-secondary/20 p-2.5 text-sm">
               <span className="mt-0.5 shrink-0 text-primary">•</span>
               <span>{item}</span>
@@ -313,10 +320,12 @@ function ArtifactViewer({ artifact, notebookId }: { artifact: ArtifactDTO; noteb
       );
     }
     case "FLASHCARDS": {
-      const content = artifact.content as { cards: { front: string; back: string }[] };
+      const content = artifact.content as { cards?: { front: string; back: string }[] } | null;
+      const cards = content?.cards ?? [];
+      if (!cards.length) return <NoContent />;
       return (
         <div className="space-y-4">
-          <FlashcardDeck cards={content.cards} />
+          <FlashcardDeck cards={cards} />
           <Link href="/dashboard/review">
             <Button size="sm" variant="outline" className="w-full">
               Review these with spaced repetition
@@ -327,11 +336,13 @@ function ArtifactViewer({ artifact, notebookId }: { artifact: ArtifactDTO; noteb
     }
     case "QUIZ": {
       const content = artifact.content as {
-        questions: { question: string; options: string[]; correctIndex: number; explanation: string }[];
-      };
+        questions?: { question: string; options: string[]; correctIndex: number; explanation: string }[];
+      } | null;
+      const questions = content?.questions ?? [];
+      if (!questions.length) return <NoContent />;
       return (
         <div className="space-y-4">
-          <QuizDeck questions={content.questions} />
+          <QuizDeck questions={questions} />
           <Link href="/dashboard/review">
             <Button size="sm" variant="outline" className="w-full">
               Review these with spaced repetition
@@ -341,15 +352,22 @@ function ArtifactViewer({ artifact, notebookId }: { artifact: ArtifactDTO; noteb
       );
     }
     case "MINDMAP": {
-      const content = artifact.content as { nodes: { id: string; label: string }[]; edges: { id: string; source: string; target: string }[] };
+      const content = artifact.content as {
+        nodes?: { id: string; label: string }[];
+        edges?: { id: string; source: string; target: string }[];
+      } | null;
+      const nodes = content?.nodes ?? [];
+      const edges = content?.edges ?? [];
+      if (!nodes.length) return <NoContent />;
       return (
         <div className="h-[70vh] min-h-[420px] w-full">
-          <MindMapViewer nodes={content.nodes} edges={content.edges} />
+          <MindMapViewer nodes={nodes} edges={edges} />
         </div>
       );
     }
     case "REPORT": {
-      const content = artifact.content as { markdown: string; sections: { title: string; content: string }[] };
+      const content = artifact.content as { markdown?: string; sections?: { title: string; content: string }[] } | null;
+      if (!content?.markdown) return <NoContent />;
       return (
         <div className="prose prose-sm prose-invert max-w-none">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.markdown}</ReactMarkdown>

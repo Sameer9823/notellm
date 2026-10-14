@@ -177,6 +177,42 @@ export async function consumeCredits(
   });
 }
 
+/**
+ * Refunds `amount` credits to a user after a failed metered action (e.g.
+ * the model threw after the credit was already consumed). Adds back to the
+ * fixed-window `UserCredits.balance`, capped at `CREDITS_MAX`, inside the
+ * same row-locked transaction as `consumeCredits` so a refund can't
+ * double-count against a concurrent consume.
+ *
+ * Purchased/ledger credits (see src/lib/credit-ledger.ts) are tracked
+ * separately as immutable debit/credit rows; refunding here only restores
+ * free-window budget, mirroring how `consumeCredits` spends the free window
+ * first. If you need purchased-credit refunds, that requires a separate
+ * ledger transaction — ask before changing that behavior.
+ */
+export async function refundCredits(userId: string, amount: number): Promise<void> {
+  const now = new Date();
+
+  await db.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<{ balance: number; windowStart: Date }[]>`
+      SELECT "balance", "windowStart" FROM "UserCredits" WHERE "userId" = ${userId} FOR UPDATE
+    `;
+
+    if (rows.length === 0) return;
+
+    let balance = rows[0].balance;
+    let windowStart = rows[0].windowStart;
+
+    if (windowExpired(windowStart, now)) {
+      balance = CREDITS_MAX;
+      windowStart = now;
+    }
+
+    balance = Math.min(balance + amount, CREDITS_MAX);
+    await tx.userCredits.update({ where: { userId }, data: { balance, windowStart } });
+  });
+}
+
 /** Builds a standard 402 response with the headers/body clients expect. */
 export function creditsExhaustedResponse(status: CreditStatus) {
   const minutesLeft = Math.max(1, Math.ceil((status.resetAt - Date.now()) / 60000));

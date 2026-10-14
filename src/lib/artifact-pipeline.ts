@@ -3,7 +3,9 @@ import { db } from "@/lib/db";
 import { openai, CHAT_MODEL, withRetry } from "@/lib/openai";
 import { setArtifactProgress } from "@/lib/redis";
 import { describeError } from "@/lib/utils";
+import { CREDIT_COSTS, refundCredits } from "@/lib/credits";
 import { syncReviewCardsFromArtifact } from "@/lib/review";
+import { flashcardsSchema, quizSchema, mindmapSchema, takeawaysSchema, reportSchema } from "@/lib/artifact-schemas";
 
 const MAX_CONTEXT_CHARS = 60_000; // per-notebook budget for the generation prompt
 
@@ -11,86 +13,62 @@ const MAX_CONTEXT_CHARS = 60_000; // per-notebook budget for the generation prom
 // Ported from sourcelm's artifact-generation.service.ts: one Zod schema per
 // artifact type, used both to steer the model (JSON mode + a schema
 // description in the prompt) and to validate its output before it's stored.
+//
+// Design notes:
+// - `.max(N)` is intentionally replaced with `.transform(arr => arr.slice(0, N))`
+//   so the model can return extra items without the *entire* generation failing.
+//   The schema truncates and continues; only the hard floor (`.min(N)`) is a
+//   real validation gate.
+// - Quiz and mind-map have normalizer transforms that drop invalid entries
+//   (out-of-range correctIndex, dangling edges, self-edges, duplicate node ids)
+//   so a single bad item doesn't sink the whole batch.
+// - Schemas live in lib/artifact-schemas.ts so they're testable without db/openai.
 // ---------------------------------------------------------------------------
 
-const flashcardsSchema = z.object({
-  cards: z
-    .array(z.object({ front: z.string(), back: z.string() }))
-    .min(3)
-    .max(30),
-});
-
-const quizSchema = z.object({
-  questions: z
-    .array(
-      z.object({
-        question: z.string(),
-        options: z.array(z.string()).min(2).max(5),
-        correctIndex: z.number().int().min(0),
-        explanation: z.string(),
-      })
-    )
-    .min(3)
-    .max(15),
-});
-
-const mindmapSchema = z.object({
-  nodes: z
-    .array(z.object({ id: z.string(), label: z.string() }))
-    .min(2)
-    .max(40),
-  edges: z.array(z.object({ id: z.string(), source: z.string(), target: z.string() })),
-});
-
-const takeawaysSchema = z.object({
-  items: z.array(z.string()).min(3).max(20),
-});
-
-/** Recursively flattens whatever shape the model returned (string, array of
- *  strings, array of {text}/{content} objects, nested arrays, etc.) into a
- *  single plain-text string, so minor shape drift in JSON-mode output never
- *  fails validation. */
-function flattenToText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) return value.map(flattenToText).filter(Boolean).join("\n\n");
-  if (value && typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    const candidate = obj.text ?? obj.content ?? obj.value ?? obj.markdown;
-    if (typeof candidate === "string") return candidate;
-    return Object.values(obj).map(flattenToText).filter(Boolean).join("\n\n");
-  }
-  return "";
-}
-
-const reportSchema = z.object({
-  markdown: z.string(),
-  sections: z
-    .array(
-      z.object({
-        title: z.string(),
-        content: z.unknown().transform(flattenToText),
-      })
-    )
-    .optional()
-    .default([]),
-});
-
-export type ArtifactType = "SUMMARY" | "TAKEAWAYS" | "FLASHCARDS" | "QUIZ" | "MINDMAP" | "REPORT";
-
+/** Generates type-specific content for one artifact from a block of source text. */
 /** Collects text from a notebook's READY sources for artifact generation,
- *  scoped to `sourceIds` when given, otherwise every ready source. */
+ *  scoped to `sourceIds` when given, otherwise every ready source.
+ *
+ *  Loads Chunk rows instead of Source.rawText: ingest only stores
+ *  `.slice(0, 4000)` of rawText for URL/PDF/YOUTUBE/VTT sources, so artifacts
+ *  based on rawText would only see the first ~4000 chars. Chunks contain the
+ *  full extracted content across all pages/timestamps. */
 async function gatherSourceContext(notebookId: string, sourceIds: string[]) {
-  const sources: { id: string; title: string; rawText: string | null }[] = await db.source.findMany({
+  const sources = await db.source.findMany({
     where: { notebookId, status: "READY" },
     select: { id: true, title: true, rawText: true },
   });
 
   const selected = sourceIds.length ? sources.filter((s) => sourceIds.includes(s.id)) : sources;
 
-  const withContent = selected.flatMap((s) => {
-    const content = s.rawText?.trim();
-    return content ? [{ title: s.title, content }] : [];
+  // Load all chunks for the selected sources in one query, ordered by
+  // source then chunk index so the text reads top-to-bottom.
+  const chunks = await db.chunk.findMany({
+    where: { sourceId: { in: selected.map((s) => s.id) } },
+    orderBy: { sourceId: "asc", index: "asc" },
+    select: { sourceId: true, content: true },
   });
+
+  // Group chunks by sourceId so we can preserve per-source attribution.
+  const bySource = new Map<string, string[]>();
+  for (const c of chunks) {
+    (bySource.get(c.sourceId) ?? bySource.set(c.sourceId, []).get(c.sourceId)!).push(c.content);
+  }
+
+  const withContent: { title: string; content: string }[] = [];
+  for (const s of selected) {
+    const sourceChunks = bySource.get(s.id);
+    if (sourceChunks && sourceChunks.length > 0) {
+      // Chunks overlap slightly (~80 tokens); the small duplication is
+      // acceptable since it's fed to an LLM that tolerates redundancy, and
+      // avoids losing boundary sentences that a naive dedupe could drop.
+      const content = sourceChunks.join("\n\n").trim();
+      if (content) withContent.push({ title: s.title, content });
+    } else if (s.rawText?.trim()) {
+      // Fall back to rawText when a source has no chunks yet
+      withContent.push({ title: s.title, content: s.rawText.trim() });
+    }
+  }
 
   if (withContent.length === 0) {
     throw new Error("Selected sources have no extracted content yet.");
@@ -98,7 +76,7 @@ async function gatherSourceContext(notebookId: string, sourceIds: string[]) {
 
   const perSourceChars = Math.max(4000, Math.floor(MAX_CONTEXT_CHARS / withContent.length));
   const text = withContent
-    .map((s: { title: string; content: string }) => `# ${s.title}\n\n${s.content.slice(0, perSourceChars)}`)
+    .map((s) => `# ${s.title}\n\n${s.content.slice(0, perSourceChars)}`)
     .join("\n\n---\n\n")
     .slice(0, MAX_CONTEXT_CHARS);
 
@@ -106,26 +84,66 @@ async function gatherSourceContext(notebookId: string, sourceIds: string[]) {
 }
 
 async function callJsonModel<T>(prompt: string, schema: z.ZodType<T>, system: string): Promise<T> {
-  const res = await withRetry(() =>
-    openai.chat.completions.create({
-      model: CHAT_MODEL,
-      temperature: 0.4,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: prompt },
-      ],
-    })
-  );
-  const raw = res.choices[0]?.message?.content ?? "{}";
-  let parsed: unknown;
+  const generate = async (): Promise<T> => {
+    const res = await withRetry(() =>
+      openai.chat.completions.create({
+        model: CHAT_MODEL,
+        temperature: 0.4,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: prompt },
+        ],
+      })
+    );
+    const raw = res.choices[0]?.message?.content ?? "{}";
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error("Model returned invalid JSON");
+    }
+    return schema.parse(parsed);
+  };
+
+  const retryWithFeedback = async (feedback: string): Promise<T> => {
+    const res = await withRetry(() =>
+      openai.chat.completions.create({
+        model: CHAT_MODEL,
+        temperature: 0.4,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: `${prompt}\n\nThe previous response failed validation:\n${feedback}\nPlease fix and return valid JSON.` },
+        ],
+      })
+    );
+    const raw = res.choices[0]?.message?.content ?? "{}";
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error("Model returned invalid JSON on retry");
+    }
+    return schema.parse(parsed);
+  };
+
   try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error("Model returned invalid JSON");
+    return await generate();
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      // Retry once, feeding the validation errors back to the model so it
+      // can correct the shape on the second pass.
+      const feedback = err.issues.map((i) => `- ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
+      // eslint-disable-next-line no-console
+      console.error("[artifact] validation failed, retrying once:", feedback);
+      return await retryWithFeedback(feedback);
+    }
+    throw err;
   }
-  return schema.parse(parsed);
 }
+
+export type ArtifactType = "SUMMARY" | "TAKEAWAYS" | "FLASHCARDS" | "QUIZ" | "MINDMAP" | "REPORT";
 
 /** Generates type-specific content for one artifact from a block of source text. */
 export async function generateArtifactContent(type: ArtifactType, sourceText: string) {
@@ -146,25 +164,25 @@ export async function generateArtifactContent(type: ArtifactType, sourceText: st
     }
     case "TAKEAWAYS":
       return callJsonModel(
-        `Extract the most important key takeaways as concise bullet points, shape { "items": string[] }, from:\n\n${sourceText}`,
+        `Extract 8-15 key takeaways as concise bullet points, shape { "items": string[] }, from:\n\n${sourceText}`,
         takeawaysSchema,
         system
       );
     case "FLASHCARDS":
       return callJsonModel(
-        `Create study flashcards, shape { "cards": [{ "front": "...", "back": "..." }] }, covering the main concepts from:\n\n${sourceText}`,
+        `Generate 10-20 flashcards, shape { "cards": [{ "front": "...", "back": "..." }] }, covering the main concepts from:\n\n${sourceText}`,
         flashcardsSchema,
         system
       );
     case "QUIZ":
       return callJsonModel(
-        `Create a multiple-choice quiz, shape { "questions": [{ "question": "...", "options": string[], "correctIndex": number, "explanation": "..." }] }, from:\n\n${sourceText}`,
+        `Generate 8-12 multiple-choice questions, each with exactly 4 options, shape { "questions": [{ "question": "...", "options": string[], "correctIndex": number, "explanation": "..." }] }, from:\n\n${sourceText}`,
         quizSchema,
         system
       );
     case "MINDMAP":
       return callJsonModel(
-        `Create a mind map, shape { "nodes": [{ "id": "...", "label": "..." }], "edges": [{ "id": "...", "source": "...", "target": "..." }] }. Use a central topic node and branch out logically from:\n\n${sourceText}`,
+        `Generate a mind map with 10-30 nodes, shape { "nodes": [{ "id": "...", "label": "..." }], "edges": [{ "id": "...", "source": "...", "target": "..." }] }. Use a central topic node and branch out logically from:\n\n${sourceText}`,
         mindmapSchema,
         system
       );
@@ -207,10 +225,29 @@ export async function runArtifactPipeline(artifactId: string) {
 
     // Auto-creates one ReviewCard per flashcard/quiz question so the deck
     // is immediately reviewable — never blocks the artifact from finishing.
-    await syncReviewCardsFromArtifact(updated).catch(() => {});
+    void syncReviewCardsFromArtifact(updated).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error(`[artifact] failed to sync review cards for ${updated.id}:`, describeError(err));
+    });
   } catch (err) {
-    const message = describeError(err);
+    let message: string;
+    if (err instanceof z.ZodError) {
+      // eslint-disable-next-line no-console
+      console.error(`[artifact] validation error for artifact ${artifact.id}:`, err.issues);
+      message = "The AI returned an unexpected format. Try again.";
+    } else {
+      message = describeError(err);
+    }
     await db.artifact.update({ where: { id: artifact.id }, data: { status: "FAILED", errorMessage: message } });
     await mark(artifact.id, "FAILED", "Generation failed", 100, message);
+    // Refund the artifact-generation credit on failure — the user paid
+    // but got nothing usable back.
+    const notebook = await db.notebook.findUnique({
+      where: { id: artifact.notebookId },
+      select: { ownerId: true },
+    });
+    if (notebook) {
+      void refundCredits(notebook.ownerId, CREDIT_COSTS.artifactGenerate);
+    }
   }
 }

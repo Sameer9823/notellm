@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { setArtifactProgress, getArtifactProgress } from "@/lib/redis";
 import { safeSend } from "@/lib/inngest/client";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
-import { consumeCredits, creditsExhaustedResponse, CREDIT_COSTS } from "@/lib/credits";
+import { consumeCredits, creditsExhaustedResponse, CREDIT_COSTS, refundCredits } from "@/lib/credits";
 import { z } from "zod";
 
 async function ownedNotebook(id: string, userId: string) {
@@ -105,6 +105,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       "Couldn't queue artifact generation. If you're running locally, make sure `npx inngest-cli@latest dev` is running alongside `npm run dev`; in production, check INNGEST_EVENT_KEY / INNGEST_SIGNING_KEY are set.";
     await db.artifact.update({ where: { id: artifact.id }, data: { status: "FAILED", errorMessage } }).catch(() => {});
     await setArtifactProgress(artifact.id, { status: "FAILED", percent: 0, updatedAt: Date.now(), errorMessage });
+    // The credit was consumed above but no job was queued — refund it.
+    void refundCredits(userId, CREDIT_COSTS.artifactGenerate);
   }
 
   return NextResponse.json(

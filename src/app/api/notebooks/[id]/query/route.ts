@@ -4,7 +4,8 @@ import { after } from "next/server";
 import { db } from "@/lib/db";
 import { streamAnswer, extractCitations } from "@/lib/rag";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
-import { consumeCredits, creditsExhaustedResponse, CREDIT_COSTS } from "@/lib/credits";
+import { consumeCredits, creditsExhaustedResponse, CREDIT_COSTS, refundCredits } from "@/lib/credits";
+import { describeError } from "@/lib/utils";
 import { getMemoryContext, extractMemoriesFromMessages } from "@/lib/memory";
 import { z } from "zod";
 
@@ -50,15 +51,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const spend = await consumeCredits(userId, CREDIT_COSTS.chat);
   if (!spend.allowed) return creditsExhaustedResponse(spend.status);
 
+  // Fetch the most recent 20 messages (descending), then reverse to
+  // chronological order so the model sees the latest turns. The previous
+  // `orderBy: "asc"` + `take: 20` returned the OLDEST 20 messages, which
+  // meant after ~10 exchanges the model never saw the current conversation.
   const priorMessages = await db.message.findMany({
     where: { notebookId },
-    orderBy: { createdAt: "asc" },
+    orderBy: { createdAt: "desc" },
     take: 20,
   });
-  const history = priorMessages.map((m: { role: string; content: string }) => ({
-    role: m.role === "USER" ? ("user" as const) : ("assistant" as const),
-    content: m.content,
-  }));
+  const history = priorMessages
+    .reverse()
+    .map((m: { role: string; content: string }) => ({
+      role: m.role === "USER" ? ("user" as const) : ("assistant" as const),
+      content: m.content,
+    }));
 
   await db.message.create({ data: { notebookId, role: "USER", content: question } });
 
@@ -71,19 +78,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   };
 
   const memoryContext = await getMemoryContext(userId, question).catch(() => "");
-  const { chunks, stream } = await streamAnswer(notebookId, question, history, sourceId, memoryContext, webSearch);
 
-  // Only true if even the out-of-source general-knowledge stream failed to
-  // start (e.g. OpenAI is unreachable) — normal "nothing in sources" cases
-  // are now handled by streaming a flagged general-knowledge answer instead
-  // of a static refusal, so the user always gets a useful response.
-  if (!stream) {
-    const fallback = sourceId
-      ? "That source doesn't contain enough content to answer this — or nothing in it relates closely enough. Try switching to \"All sources\", or ask something else about this source."
-      : "This notebook doesn't have any indexed sources yet — or none of them relate closely enough to answer that. Add a source, or wait for indexing to finish, then try again.";
-    await db.message.create({ data: { notebookId, role: "ASSISTANT", content: fallback, citations: [] } });
-    return NextResponse.json({ answer: fallback, citations: [] }, { headers: creditsHeaders });
+  let retrieval: Awaited<ReturnType<typeof streamAnswer>>;
+  try {
+    retrieval = await streamAnswer(notebookId, question, history, sourceId, memoryContext, webSearch);
+  } catch (err) {
+    // streamAnswer threw before streaming started (e.g. OpenAI unreachable).
+    // Refund the consumed credit and return a clean 502 so the client can
+    // surface a useful error instead of a bare 500 after a silent credit loss.
+    void refundCredits(userId, CREDIT_COSTS.chat);
+    // eslint-disable-next-line no-console
+    console.error("[query] streamAnswer failed before streaming:", describeError(err));
+    return NextResponse.json(
+      { error: "The AI service is temporarily unavailable. Your credit has been refunded." },
+      { status: 502, headers: creditsHeaders }
+    );
   }
+
+  const { chunks, stream } = retrieval;
 
   const encoder = new TextEncoder();
   let full = "";
@@ -116,7 +128,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           ])
         );
       } catch (err) {
-        controller.error(err);
+        // Stream failed after partial output — save what was streamed as the
+        // assistant message, refund the credit, and surface a clean error.
+        void refundCredits(userId, CREDIT_COSTS.chat);
+        // eslint-disable-next-line no-console
+        console.error("[query] stream failed mid-response:", describeError(err));
+        const message = full.trim()
+          ? `${full.trim()}\n\n[Response was interrupted before completion.]`
+          : "The response was interrupted before completion.";
+        await db.message.create({
+          data: { notebookId, role: "ASSISTANT", content: message, citations: [] },
+        });
+        controller.enqueue(encoder.encode(CITATIONS_MARKER + JSON.stringify([])));
+        controller.error(new Error("Stream interrupted"));
       }
     },
   });

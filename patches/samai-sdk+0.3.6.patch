@@ -1,11 +1,13 @@
-diff --git a/dist/voice/index.js b/dist/voice/index.js
---- a/dist/voice/index.js
-+++ b/dist/voice/index.js
-@@ -1560,6 +1560,44 @@
+diff --git a/node_modules/samai-sdk/dist/voice/index.cjs b/node_modules/samai-sdk/dist/voice/index.cjs
+index 54be2b9..67a4598 100644
+--- a/node_modules/samai-sdk/dist/voice/index.cjs
++++ b/node_modules/samai-sdk/dist/voice/index.cjs
+@@ -1610,6 +1610,53 @@ function openaiRealtime(config = {}) {
              break;
          }
        }
-+      // --- function calling over WebRTC ---
++
++       // --- function calling over WebRTC ---
 +      const rtcTools = new Map((options.agent.tools ?? []).map((t) => [t.name, t]));
 +      const rtcHandledCalls = new Set();
 +      let rtcResponseActive = false;
@@ -13,6 +15,7 @@ diff --git a/dist/voice/index.js b/dist/voice/index.js
 +      function rtcRequestResponse() {
 +        if (closed || !webrtc) return;
 +        if (rtcResponseActive) { rtcPendingResponseCreate = true; return; }
++        rtcResponseActive = true; // Set immediately to prevent a second response.create racing in before response.created arrives
 +        webrtc.sendQuiet({ type: "response.create" });
 +      }
 +      async function handleWebRtcFunctionCall(name, callId, argsJson) {
@@ -20,6 +23,13 @@ diff --git a/dist/voice/index.js b/dist/voice/index.js
 +        if (callId) {
 +          if (rtcHandledCalls.has(callId)) return;
 +          rtcHandledCalls.add(callId);
++          // Bound the dedup set so it can't grow unbounded across a long
++          // session: when it exceeds the cap, drain to the most recent half.
++          if (rtcHandledCalls.size > 1000) {
++            const entries = [...rtcHandledCalls];
++            rtcHandledCalls.clear();
++            for (let i = entries.length - 500; i < entries.length; i++) rtcHandledCalls.add(entries[i]);
++          }
 +        }
 +        let args = {};
 +        try { args = JSON.parse(argsJson || "{}"); } catch {}
@@ -46,7 +56,7 @@ diff --git a/dist/voice/index.js b/dist/voice/index.js
        function handleRealtimeMessage(raw) {
          if (closed || !raw || typeof raw !== "object") return;
          const msg = raw;
-@@ -1606,10 +1644,24 @@
+@@ -1656,10 +1703,24 @@ function openaiRealtime(config = {}) {
                engine.handleAssistantStopped();
              }
              break;
@@ -71,14 +81,15 @@ diff --git a/dist/voice/index.js b/dist/voice/index.js
              handleRealtimeEvent({ type: "response.cancelled" });
              break;
            case "error":
-
-diff --git a/dist/voice/index.cjs b/dist/voice/index.cjs
---- a/dist/voice/index.cjs
-+++ b/dist/voice/index.cjs
-@@ -1610,6 +1610,44 @@
+diff --git a/node_modules/samai-sdk/dist/voice/index.js b/node_modules/samai-sdk/dist/voice/index.js
+index 31933bb..9d242fa 100644
+--- a/node_modules/samai-sdk/dist/voice/index.js
++++ b/node_modules/samai-sdk/dist/voice/index.js
+@@ -1560,6 +1560,53 @@ function openaiRealtime(config = {}) {
              break;
          }
        }
++
 +      // --- function calling over WebRTC ---
 +      const rtcTools = new Map((options.agent.tools ?? []).map((t) => [t.name, t]));
 +      const rtcHandledCalls = new Set();
@@ -87,6 +98,7 @@ diff --git a/dist/voice/index.cjs b/dist/voice/index.cjs
 +      function rtcRequestResponse() {
 +        if (closed || !webrtc) return;
 +        if (rtcResponseActive) { rtcPendingResponseCreate = true; return; }
++        rtcResponseActive = true; // Set immediately to prevent a second response.create racing in before response.created arrives
 +        webrtc.sendQuiet({ type: "response.create" });
 +      }
 +      async function handleWebRtcFunctionCall(name, callId, argsJson) {
@@ -94,6 +106,13 @@ diff --git a/dist/voice/index.cjs b/dist/voice/index.cjs
 +        if (callId) {
 +          if (rtcHandledCalls.has(callId)) return;
 +          rtcHandledCalls.add(callId);
++          // Bound the dedup set so it can't grow unbounded across a long
++          // session: when it exceeds the cap, drain to the most recent half.
++          if (rtcHandledCalls.size > 1000) {
++            const entries = [...rtcHandledCalls];
++            rtcHandledCalls.clear();
++            for (let i = entries.length - 500; i < entries.length; i++) rtcHandledCalls.add(entries[i]);
++          }
 +        }
 +        let args = {};
 +        try { args = JSON.parse(argsJson || "{}"); } catch {}
@@ -120,7 +139,7 @@ diff --git a/dist/voice/index.cjs b/dist/voice/index.cjs
        function handleRealtimeMessage(raw) {
          if (closed || !raw || typeof raw !== "object") return;
          const msg = raw;
-@@ -1656,10 +1694,24 @@
+@@ -1606,10 +1653,24 @@ function openaiRealtime(config = {}) {
                engine.handleAssistantStopped();
              }
              break;
@@ -145,4 +164,3 @@ diff --git a/dist/voice/index.cjs b/dist/voice/index.cjs
              handleRealtimeEvent({ type: "response.cancelled" });
              break;
            case "error":
-

@@ -2,7 +2,7 @@ import { v4 as uuid } from "uuid";
 import { db } from "@/lib/db";
 import { setProgress } from "@/lib/redis";
 import { embedTexts, detectLanguage, translateCuesToEnglish } from "@/lib/openai";
-import { upsertChunks, deleteBySource } from "@/lib/qdrant";
+import { upsertChunks, deleteBySourceExcept } from "@/lib/qdrant";
 import { chunkPlainText, chunkPages, chunkCues, type TextChunk, type Cue } from "@/lib/chunking";
 import { extractPdf } from "@/lib/extractors/pdf";
 import { extractUrl } from "@/lib/extractors/url";
@@ -74,46 +74,56 @@ export async function runIngestPipeline(sourceId: string) {
       vector: vectors[i],
     }));
 
-    await deleteBySource(source.id); // safe no-op on first index, required on reindex
+    // Non-atomic reindex safety: upsert NEW points first, swap Postgres in a
+    // transaction, THEN delete the OLD Qdrant points (excluding the new ids).
+    // If anything fails, the source keeps its previous working index.
     await upsertChunks(
       chunkRows.map((r) => ({
         id: r.id,
         vector: r.vector,
-         payload: {
-           notebookId: source.notebookId,
-           sourceId: source.id,
-           sourceTitle: resolvedTitle,
-           sourceType: source.type,
-           chunkId: r.id,
-           index: r.chunk.index,
-           content: r.chunk.content,
-           page: r.chunk.page,
-           startSec: r.chunk.startSec,
-           endSec: r.chunk.endSec,
-           startChar: r.chunk.startChar,
-           endChar: r.chunk.endChar,
-           originUrl: source.originUrl ?? undefined,
-         },
+        payload: {
+          notebookId: source.notebookId,
+          sourceId: source.id,
+          sourceTitle: resolvedTitle,
+          sourceType: source.type,
+          chunkId: r.id,
+          index: r.chunk.index,
+          content: r.chunk.content,
+          page: r.chunk.page,
+          startSec: r.chunk.startSec,
+          endSec: r.chunk.endSec,
+          startChar: r.chunk.startChar,
+          endChar: r.chunk.endChar,
+          originUrl: source.originUrl ?? undefined,
+        },
       }))
     );
 
-    await db.chunk.deleteMany({ where: { sourceId: source.id } });
-    await db.chunk.createMany({
-      data: chunkRows.map((r) => ({
-        id: r.id,
-        sourceId: source.id,
-        notebookId: source.notebookId,
-        index: r.chunk.index,
-        content: r.chunk.content,
-        tokenCount: r.chunk.tokenCount,
-        startChar: r.chunk.startChar,
-        endChar: r.chunk.endChar,
-        page: r.chunk.page,
-        startSec: r.chunk.startSec,
-        endSec: r.chunk.endSec,
-        vectorId: r.id,
-      })),
+    // Swap the Postgres chunk rows atomically — if createMany rolls back,
+    // the old rows still match the old Qdrant vectors.
+    await db.$transaction(async (tx) => {
+      await tx.chunk.deleteMany({ where: { sourceId: source.id } });
+      await tx.chunk.createMany({
+        data: chunkRows.map((r) => ({
+          id: r.id,
+          sourceId: source.id,
+          notebookId: source.notebookId,
+          index: r.chunk.index,
+          content: r.chunk.content,
+          tokenCount: r.chunk.tokenCount,
+          startChar: r.chunk.startChar,
+          endChar: r.chunk.endChar,
+          page: r.chunk.page,
+          startSec: r.chunk.startSec,
+          endSec: r.chunk.endSec,
+          vectorId: r.id,
+        })),
+      });
     });
+
+    // Only after Postgres is swapped do we remove the old Qdrant points,
+    // preserving the freshly-upserted new ids so they don't get deleted.
+    await deleteBySourceExcept(source.id, chunkRows.map((r) => r.id));
 
     await db.source.update({
       where: { id: source.id },

@@ -49,19 +49,54 @@ export function chunkPlainText(text: string): TextChunk[] {
   if (!clean) return [];
 
   const sentences: { text: string; start: number }[] = [];
+  // After splitting on sentence boundaries, each raw sentence may be far
+  // larger than TARGET_CHARS (e.g. un-punctuated text becomes a single
+  // 50k-char "sentence"). splitOversized cuts any such run into pieces <=
+  // TARGET_CHARS so embedding never hits the model's input limit, while
+  // preserving absolute character offsets for citation deep-links.
+  const splitOversized = (text: string, start: number): { text: string; start: number }[] => {
+    if (text.length <= TARGET_CHARS) return [{ text, start }];
+    const pieces: { text: string; start: number }[] = [];
+    let pos = start;
+    let remaining = text;
+    while (remaining.length > TARGET_CHARS) {
+      const window = remaining.slice(0, TARGET_CHARS);
+      const lastSpace = window.lastIndexOf(" ");
+      // Only split at a space if it's past the half-way point of the window;
+      // otherwise hard-cut at TARGET_CHARS to guarantee every piece fits.
+      const splitAt = lastSpace > TARGET_CHARS / 2 ? lastSpace : TARGET_CHARS;
+      pieces.push({ text: remaining.slice(0, splitAt), start: pos });
+      pos += splitAt;
+      remaining = remaining.slice(splitAt);
+    }
+    if (remaining.length > 0) pieces.push({ text: remaining, start: pos });
+    return pieces;
+  };
+
   let cursor = 0;
   for (const part of clean.split(SENTENCE_BOUNDARY)) {
     if (!part) continue;
     const start = clean.indexOf(part, cursor);
-    sentences.push({ text: part, start: start === -1 ? cursor : start });
-    cursor = (start === -1 ? cursor : start) + part.length;
+    const actualStart = start === -1 ? cursor : start;
+    for (const piece of splitOversized(part, actualStart)) {
+      sentences.push(piece);
+    }
+    cursor = actualStart + part.length;
   }
 
   const chunks: TextChunk[] = [];
   let buffer: typeof sentences = [];
   let bufferChars = 0;
+  // Tracks whether the buffer has received a sentence since the last flush.
+  // After a flush, only the overlap carry is left in the buffer — if the
+  // input ends right then, the trailing flush() must NOT emit that overlap
+  // as a standalone chunk, which would duplicate the tail of the previous
+  // chunk. hasNew is set true whenever a sentence is pushed, and reset to
+  // false right after the overlap carry so flush() can skip an empty emit.
+  let hasNew = false;
 
   const flush = () => {
+    if (!hasNew) return;
     if (!buffer.length) return;
     const start = buffer[0].start;
     const last = buffer[buffer.length - 1];
@@ -81,19 +116,25 @@ export function chunkPlainText(text: string): TextChunk[] {
   for (const sentence of sentences) {
     buffer.push(sentence);
     bufferChars += sentence.text.length;
+    hasNew = true;
     if (bufferChars >= TARGET_CHARS) {
       flush();
-      // carry overlap: keep trailing sentences whose combined length ~ OVERLAP_CHARS
+      // carry overlap: keep trailing sentences whose combined length
+      // fits within OVERLAP_CHARS. Using <= (instead of <) ensures a
+      // single oversized sentence that exceeds OVERLAP_CHARS on its own
+      // is dropped from the carry rather than forcing itself into every
+      // subsequent chunk.
       let overlap = 0;
       let i = buffer.length - 1;
       const kept: typeof sentences = [];
-      while (i >= 0 && overlap < OVERLAP_CHARS) {
+      while (i >= 0 && overlap + buffer[i].text.length <= OVERLAP_CHARS) {
         kept.unshift(buffer[i]);
         overlap += buffer[i].text.length;
         i--;
       }
       buffer = kept;
       bufferChars = overlap;
+      hasNew = false;
     }
   }
   flush();

@@ -27,9 +27,17 @@ export default function DashboardPage() {
   const [deleting, setDeleting] = useState<NotebookDTO | null>(null);
 
   async function load() {
-    const res = await fetch("/api/notebooks");
-    const data = await res.json();
-    setNotebooks(data.notebooks);
+    try {
+      const res = await fetch("/api/notebooks");
+      if (!res.ok) {
+        setNotebooks([]);
+        return;
+      }
+      const data = await res.json();
+      setNotebooks(data.notebooks ?? []);
+    } catch {
+      setNotebooks([]);
+    }
   }
 
   useEffect(() => {

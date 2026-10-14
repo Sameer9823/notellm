@@ -31,6 +31,24 @@ export async function syncReviewCardsFromArtifact(artifact: Artifact) {
 
   if (rows.length === 0) return;
 
+  // Fetch existing cards so we can detect whether `front` has changed for
+  // each index. When the deck is regenerated with different content at the
+  // same index, the old SRS progress (easeFactor, intervalDays, repetitions,
+  // dueAt) must NOT carry over to the new question — those answers no
+  // longer apply to different content.
+  const existing = await db.reviewCard.findMany({
+    where: { artifactId: artifact.id, cardIndex: { in: rows.map((r) => r.cardIndex) } },
+    select: { cardIndex: true, front: true },
+  });
+  const frontChanged = new Set(
+    existing
+      .filter((e) => {
+        const newRow = rows.find((r) => r.cardIndex === e.cardIndex);
+        return newRow && e.front !== newRow.front;
+      })
+      .map((e) => e.cardIndex)
+  );
+
   await Promise.all(
     rows.map((row) =>
       db.reviewCard.upsert({
@@ -41,6 +59,9 @@ export async function syncReviewCardsFromArtifact(artifact: Artifact) {
           options: row.options ?? [],
           correctIndex: row.correctIndex,
           explanation: row.explanation,
+          ...(frontChanged.has(row.cardIndex)
+            ? { easeFactor: 2.5, intervalDays: 0, repetitions: 0, dueAt: new Date(), lastReviewedAt: null, lastGrade: null }
+            : {}),
         },
         create: row,
       })
@@ -88,18 +109,25 @@ function buildQuizRows(artifact: Artifact, userId: string): ReviewCardRow[] {
     | { questions?: { question: string; options: string[]; correctIndex: number; explanation: string }[] }
     | null;
   const questions = content?.questions ?? [];
-  return questions.map((q, index) => ({
-    userId,
-    notebookId: artifact.notebookId,
-    artifactId: artifact.id,
-    cardIndex: index,
-    cardType: "QUIZ",
-    front: q.question,
-    back: q.options[q.correctIndex] ?? "",
-    options: q.options,
-    correctIndex: q.correctIndex,
-    explanation: q.explanation,
-  }));
+  return questions.map((q, index) => {
+    const options = q.options ?? [];
+    const safeCorrectIndex =
+      Number.isInteger(q.correctIndex) && q.correctIndex >= 0 && q.correctIndex < options.length
+        ? q.correctIndex
+        : null;
+    return {
+      userId,
+      notebookId: artifact.notebookId,
+      artifactId: artifact.id,
+      cardIndex: index,
+      cardType: "QUIZ" as const,
+      front: q.question,
+      back: options[safeCorrectIndex ?? 0] ?? "",
+      options: options,
+      correctIndex: safeCorrectIndex,
+      explanation: q.explanation,
+    };
+  });
 }
 
 /** Builds a review session: cards already due first (oldest-due first),

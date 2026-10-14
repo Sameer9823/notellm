@@ -7,3 +7,12 @@ out
 .DS_Store
 dist
 .vercel
+
+# clerk configuration (can include secrets)
+/.clerk/
+
+# TypeScript incremental build info — regenerates on every typecheck
+tsconfig.tsbuildinfo
+# Vite cache
+.vitest
+
