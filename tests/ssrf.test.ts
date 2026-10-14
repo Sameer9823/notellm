@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isPrivateIp, validateAndResolveUrl } from "../src/lib/ssrf";
+import { isPrivateIp, isPrivateIpv6, validateAndResolveUrl } from "../src/lib/ssrf";
 
 describe("isPrivateIp", () => {
   it("rejects loopback 127.x.x.x", () => {
@@ -73,6 +73,62 @@ describe("isPrivateIp", () => {
 
   it("does not detect IPv4-mapped IPv6 in isPrivateIp (IPv4-only check)", () => {
     expect(isPrivateIp("::ffff:127.0.0.1")).toBe(false);
+  });
+});
+
+describe("isPrivateIpv6", () => {
+  it("rejects ::1 loopback", () => {
+    expect(isPrivateIpv6("::1")).toBe(true);
+  });
+
+  it("rejects :: (unspecified)", () => {
+    expect(isPrivateIpv6("::")).toBe(true);
+  });
+
+  it("rejects IPv4-mapped IPv6 loopback", () => {
+    expect(isPrivateIpv6("::ffff:127.0.0.1")).toBe(true);
+    expect(isPrivateIpv6("::ffff:7f00:1")).toBe(true);
+  });
+
+  it("rejects IPv4-mapped IPv6 metadata endpoint", () => {
+    expect(isPrivateIpv6("::ffff:169.254.169.254")).toBe(true);
+  });
+
+  it("rejects ULA (unique local address)", () => {
+    expect(isPrivateIpv6("fd00::1")).toBe(true);
+    expect(isPrivateIpv6("fd12:3456:789a::1")).toBe(true);
+  });
+
+  it("rejects link-local", () => {
+    expect(isPrivateIpv6("fe80::1")).toBe(true);
+    expect(isPrivateIpv6("fe80::1%eth0")).toBe(true);
+  });
+
+  it("rejects multicast", () => {
+    expect(isPrivateIpv6("ff02::1")).toBe(true);
+  });
+
+  it("rejects NAT64-mapped loopback", () => {
+    expect(isPrivateIpv6("64:ff9b::7f00:1")).toBe(true);
+    expect(isPrivateIpv6("64:ff9b::169.254.169.254")).toBe(true);
+  });
+
+  it("rejects 6to4-mapped loopback", () => {
+    expect(isPrivateIpv6("2002:7f00:1::")).toBe(true);
+  });
+
+  it("rejects documentation prefix", () => {
+    expect(isPrivateIpv6("2001:db8::1")).toBe(true);
+  });
+
+  it("rejects malformed addresses (fail closed)", () => {
+    expect(isPrivateIpv6("not-an-ip")).toBe(true);
+    expect(isPrivateIpv6("::ffff:999.999.999.999")).toBe(true);
+  });
+
+  it("allows public IPv6", () => {
+    expect(isPrivateIpv6("2606:4700:4700::1111")).toBe(false);
+    expect(isPrivateIpv6("2001:4860:4860::8888")).toBe(false);
   });
 });
 
@@ -151,6 +207,29 @@ describe("validateAndResolveUrl", () => {
 
   it("allows URLs with explicit public port", async () => {
     const result = await validateAndResolveUrl("https://example.com:443/path?query=1");
+    expect(result.ok).toBe(true);
+  });
+
+  it.each([
+    ["http://[::1]/", "IPv6 loopback ::1"],
+    ["http://[::]/", "IPv6 unspecified ::"],
+    ["http://[::ffff:127.0.0.1]/", "IPv4-mapped IPv6 loopback (dotted)"],
+    ["http://[::ffff:7f00:1]/", "IPv4-mapped IPv6 loopback (hex)"],
+    ["http://[::ffff:169.254.169.254]/", "IPv4-mapped IPv6 metadata"],
+    ["http://[fd00::1]/", "ULA"],
+    ["http://[fe80::1]/", "link-local"],
+    ["http://[64:ff9b::7f00:1]/", "NAT64 loopback"],
+    ["http://[64:ff9b::169.254.169.254]/", "NAT64 metadata"],
+    ["http://[2002:7f00:1::]/", "6to4 loopback"],
+    ["http://[2001:db8::1]/", "documentation prefix"],
+    ["http://[::1]:8080/test", "IPv6 loopback with port"],
+  ])("rejects %s (%s)", async (url) => {
+    const result = await validateAndResolveUrl(url);
+    expect(result.ok).toBe(false);
+  });
+
+  it("allows public IPv6 URLs", async () => {
+    const result = await validateAndResolveUrl("http://[2606:4700:4700::1111]/");
     expect(result.ok).toBe(true);
   });
 });

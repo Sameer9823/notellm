@@ -1,4 +1,5 @@
 import { lookup } from "dns/promises";
+import { isIP } from "node:net";
 
 const BLOCKED_RANGES = [
   // 10.0.0.0/8
@@ -30,8 +31,6 @@ const BLOCKED_RANGES = [
 function ipToNumber(ip: string): number {
   const parts = ip.split(".").map(Number);
   if (parts.length !== 4 || parts.some((p) => Number.isNaN(p) || p < 0 || p > 255)) return -1;
-  // Apply >>> 0 to the ENTIRE expression — the | operator converts operands
-  // back to signed 32-bit, so applying it only to the first term is a no-op.
   return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
 }
 
@@ -43,6 +42,64 @@ export function isPrivateIp(ip: string): boolean {
   const num = ipToNumber(ip);
   if (num < 0) return false;
   return BLOCKED_RANGES.some((r) => num >= r.start && num <= r.end);
+}
+
+function stripBrackets(host: string): string {
+  return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+}
+
+function parseIpv6(addr: string): number[] | null {
+  let a = addr.toLowerCase().split("%")[0];
+  const v4 = a.match(/(\d+\.\d+\.\d+\.\d+)$/);
+  if (v4) {
+    const n = ipToNumber(v4[1]);
+    if (n < 0) return null;
+    a = a.slice(0, -v4[0].length) + ((n >>> 16) & 0xffff).toString(16) + ":" + (n & 0xffff).toString(16);
+  }
+  const halves = a.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const missing = 8 - head.length - tail.length;
+  if (halves.length === 2 ? missing < 1 : missing !== 0) return null;
+  const parts = [...head, ...(halves.length === 2 ? Array(missing).fill("0") : []), ...tail];
+  if (parts.length !== 8 || parts.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return null;
+  return parts.map((g) => parseInt(g, 16));
+}
+
+function v4FromGroups(hi: number, lo: number): string {
+  return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+}
+
+/**
+ * Returns true if an IPv6 address (without brackets) falls within a
+ * private/loopback/link-local/multicast/documentation range.
+ */
+export function isPrivateIpv6(addr: string): boolean {
+  const g = parseIpv6(addr);
+  if (!g) return true; // malformed -> fail closed
+  const zeros5 = g.slice(0, 5).every((x) => x === 0);
+  if (g.slice(0, 7).every((x) => x === 0) && (g[7] === 0 || g[7] === 1)) return true; // :: and ::1
+  if ((g[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 ULA
+  if ((g[0] & 0xffc0) === 0xfe80 || (g[0] & 0xffc0) === 0xfec0) return true; // link-local, site-local
+  if ((g[0] & 0xff00) === 0xff00) return true; // multicast
+  if (g[0] === 0x2001 && g[1] === 0x0db8) return true; // documentation
+  if (zeros5 && (g[5] === 0xffff || g[5] === 0)) return isPrivateIp(v4FromGroups(g[6], g[7])); // mapped / compatible
+  if (g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every((x) => x === 0)) return isPrivateIp(v4FromGroups(g[6], g[7])); // NAT64
+  if (g[0] === 0x2002) return isPrivateIp(v4FromGroups(g[1], g[2])); // 6to4
+  return false;
+}
+
+function blockReason(addr: string, hostname: string): string | null {
+  const family = isIP(addr);
+  if (family === 4) return isPrivateIp(addr) ? `Blocked private IP address: ${addr} for ${hostname}` : null;
+  if (family === 6) {
+    if (!isPrivateIpv6(addr)) return null;
+    const g = parseIpv6(addr);
+    const loopback = !!g && g.slice(0, 7).every((x) => x === 0) && g[7] === 1;
+    return loopback ? `Blocked loopback IPv6 address: ${addr}` : `Blocked private IPv6 address: ${addr} for ${hostname}`;
+  }
+  return null;
 }
 
 const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
@@ -75,28 +132,29 @@ export async function validateAndResolveUrl(input: string): Promise<{ ok: boolea
     return { ok: false, url: input, error: "Blocked private/metadata hostname" };
   }
 
+  const host = stripBrackets(url.hostname);
+  const ipFamily = isIP(host);
+
   // DNS resolution + private-IP rejection. Even though the snapshot endpoint
   // delegates the actual fetch to Firecrawl (and the web-preview endpoint
   // uses safeFetch), we validate every URL that passes through our API
   // boundary so we're never an SSRF oracle to 169.254.169.254 etc.
   let addresses: string[] = [];
-  try {
-    const resolved = await lookup(url.hostname, { all: true });
-    addresses = resolved.map((a) => a.address);
-  } catch {
-    // DNS failure — let the downstream fetch/report the error.
+  if (ipFamily) {
+    // IP literal — skip DNS, check the literal directly.
+    addresses = [host];
+  } else {
+    try {
+      const resolved = await lookup(url.hostname, { all: true });
+      addresses = resolved.map((a) => a.address);
+    } catch {
+      // DNS failure — let the downstream fetch/report the error.
+    }
   }
 
   for (const addr of addresses) {
-    if (addr.includes(":")) {
-      if (addr === "::1" || addr.toLowerCase() === "::1") {
-        return { ok: false, url: input, error: `Blocked loopback IPv6 address: ${addr}` };
-      }
-    } else {
-      if (isPrivateIp(addr)) {
-        return { ok: false, url: input, error: `Blocked private IP address: ${addr} for ${url.hostname}` };
-      }
-    }
+    const reason = blockReason(addr, url.hostname);
+    if (reason) return { ok: false, url: input, error: reason };
   }
 
   return { ok: true, url: input };
@@ -106,6 +164,11 @@ export async function validateAndResolveUrl(input: string): Promise<{ ok: boolea
  * Fetches a URL with SSRF protection: resolves the hostname, rejects private
  * IPs, follows up to 3 redirects (re-validating DNS on each hop), and times
  * out after 6s. Returns the final Response.
+ *
+ * NOTE: validate-then-fetch resolves DNS twice, so a DNS-rebinding attacker
+ * could theoretically win the race between validation and the actual fetch.
+ * A full fix would pin the resolved IP for the connection (custom undici
+ * dispatcher/lookup).
  */
 export async function safeFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const validation = await validateAndResolveUrl(input);
@@ -126,26 +189,24 @@ export async function safeFetch(input: string, init: RequestInit = {}): Promise<
       throw new Error("Blocked private/metadata hostname");
     }
 
-    // DNS resolution + private-IP check.
+    const host = stripBrackets(hostname);
+    const ipFamily = isIP(host);
+
     let addresses: string[] = [];
-    try {
-      const resolved = await lookup(hostname, { all: true });
-      addresses = resolved.map((a) => a.address);
-    } catch {
-      // DNS failure — fall through and let fetch fail naturally.
+    if (ipFamily) {
+      addresses = [host];
+    } else {
+      try {
+        const resolved = await lookup(hostname, { all: true });
+        addresses = resolved.map((a) => a.address);
+      } catch {
+        // DNS failure — fall through and let fetch fail naturally.
+      }
     }
 
-    // Check all resolved addresses (IPv4 only; IPv6 ::1 is checked separately).
     for (const addr of addresses) {
-      if (addr.includes(":")) {
-        if (addr === "::1" || addr.toLowerCase() === "::1") {
-          throw new Error(`Blocked loopback IPv6 address: ${addr}`);
-        }
-      } else {
-        if (isPrivateIp(addr)) {
-          throw new Error(`Blocked private IP address: ${addr} for ${hostname}`);
-        }
-      }
+      const reason = blockReason(addr, hostname);
+      if (reason) throw new Error(reason);
     }
 
     lastResponse = await fetch(currentUrl, {

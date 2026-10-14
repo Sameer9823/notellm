@@ -15,6 +15,7 @@
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate && patch-package",
+    "prepare": "husky",
     "worker": "tsx src/worker/index.ts",
     "backfill:memory-vectors": "tsx scripts/backfill-memory-vectors.ts"
   },
@@ -77,6 +78,7 @@
     "concurrently": "^10.0.6",
     "eslint": "9.18.0",
     "eslint-config-next": "16.2.11",
+    "husky": "^9.1.7",
     "patch-package": "^8.0.1",
     "postcss": "8.5.1",
     "prisma": "6.2.1",
