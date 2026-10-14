@@ -45,7 +45,7 @@ async function gatherSourceContext(notebookId: string, sourceIds: string[]) {
   // source then chunk index so the text reads top-to-bottom.
   const chunks = await db.chunk.findMany({
     where: { sourceId: { in: selected.map((s) => s.id) } },
-    orderBy: { sourceId: "asc", index: "asc" },
+    orderBy: [{ sourceId: "asc" }, { index: "asc" }],
     select: { sourceId: true, content: true },
   });
 
