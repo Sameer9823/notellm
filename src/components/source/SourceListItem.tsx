@@ -2,11 +2,23 @@
 
 import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { RefreshCw, Trash2, MoreVertical, Pencil, Check, X } from "lucide-react";
+import {
+  RefreshCw,
+  Trash2,
+  MoreVertical,
+  Pencil,
+  Check,
+  X,
+} from "lucide-react";
 import { StatusDot, statusLabel } from "@/components/source/StatusDot";
 import { sourceTypeIcon } from "@/lib/source-meta";
 import { useSourceStatus } from "@/hooks/use-source-status";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn, truncate } from "@/lib/utils";
 import { toast } from "sonner";
 import type { SourceDTO } from "@/types";
@@ -34,14 +46,18 @@ export function SourceListItem({
    *  the new title into the notebook snapshot (chat citations, etc). */
   onRenamed?: () => void;
 }) {
-  const { status, step, errorMessage, restart } = useSourceStatus(source.id, source.status);
+  const { status, step, errorMessage, restart } = useSourceStatus(
+    source.id,
+    source.status,
+  );
   const [busy, setBusy] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(source.title);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const Icon = sourceTypeIcon[source.type];
-  const isWorking = status === "INDEXING" || status === "QUEUED" || status === "UPLOADING";
+  const isWorking =
+    status === "INDEXING" || status === "QUEUED" || status === "UPLOADING";
 
   useEffect(() => {
     if (renaming) {
@@ -66,7 +82,9 @@ export function SourceListItem({
   async function remove() {
     setBusy(true);
     try {
-      const res = await fetch(`/api/sources/${source.id}`, { method: "DELETE" });
+      const res = await fetch(`/api/sources/${source.id}`, {
+        method: "DELETE",
+      });
       if (!res.ok) throw new Error();
       toast.success("Source removed");
       onRemoved();
@@ -104,7 +122,9 @@ export function SourceListItem({
   async function reindex() {
     setBusy(true);
     try {
-      const res = await fetch(`/api/sources/${source.id}/reindex`, { method: "POST" });
+      const res = await fetch(`/api/sources/${source.id}/reindex`, {
+        method: "POST",
+      });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || "Couldn't start re-indexing");
@@ -116,7 +136,9 @@ export function SourceListItem({
       restart("QUEUED");
       toast.success("Re-indexing started");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't start re-indexing");
+      toast.error(
+        e instanceof Error ? e.message : "Couldn't start re-indexing",
+      );
     } finally {
       setBusy(false);
     }
@@ -128,10 +150,13 @@ export function SourceListItem({
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       className={cn(
-        "flex items-center gap-1.5 rounded-lg border px-2 py-2 text-sm transition-colors",
-        active ? "border-primary/40 bg-primary/10" : "border-transparent hover:bg-secondary/60"
+        "group relative flex items-center gap-1.5 rounded-md px-2 py-1.5 transition-colors",
+        active ? "bg-secondary" : "hover:bg-secondary/60",
       )}
     >
+      {active && (
+        <span className="absolute inset-y-0 left-0 w-0.5 rounded-r bg-primary" />
+      )}
       {/* Only this inner area selects the source — the menu button is a
           fully separate sibling, so there's no bubbling/overlap between them. */}
       {renaming ? (
@@ -147,7 +172,7 @@ export function SourceListItem({
             }}
             disabled={busy}
             maxLength={160}
-            className="h-6 min-w-0 flex-1 rounded border border-primary/40 bg-background px-1.5 text-sm outline-none focus:border-primary"
+            className="h-6 min-w-0 flex-1 rounded border border-primary/40 bg-background px-1.5 text-[13px] outline-none focus:border-primary"
           />
           <button
             type="button"
@@ -172,18 +197,35 @@ export function SourceListItem({
         <button
           type="button"
           onClick={onSelect}
-          title={status === "FAILED" ? errorMessage ?? "Indexing failed" : source.title}
-          className="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden text-left"
+          title={
+            status === "FAILED"
+              ? (errorMessage ?? "Indexing failed")
+              : source.title
+          }
+          className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden text-left"
         >
           <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1 overflow-hidden">
-            <div className="truncate font-medium leading-tight">{truncate(source.title, 26)}</div>
-            <div className="flex items-center gap-1.5 truncate text-[11px] text-muted-foreground">
+            <div
+              className="truncate text-[13px] font-medium text-foreground"
+              title={source.title}
+            >
+              {truncate(source.title, 32)}
+            </div>
+            <div className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
               <StatusDot status={status} size="sm" />
               <span className="truncate">
-                {status === "FAILED" ? (errorMessage ? truncate(errorMessage, 30) : "Failed") : isWorking && step ? step : statusLabel(status)}
+                {status === "FAILED"
+                  ? errorMessage
+                    ? truncate(errorMessage, 40)
+                    : "Failed"
+                  : isWorking && step
+                    ? step
+                    : statusLabel(status)}
               </span>
-              {status === "READY" && source.chunkCount > 0 && <span className="shrink-0">· {source.chunkCount} chunks</span>}
+              {status === "READY" && source.chunkCount > 0 && (
+                <span className="shrink-0">· {source.chunkCount} chunks</span>
+              )}
             </div>
           </div>
         </button>
@@ -196,8 +238,7 @@ export function SourceListItem({
             disabled={busy}
             aria-label="Source actions"
             className={cn(
-              "flex shrink-0 items-center justify-center rounded-md border border-border bg-secondary p-2 text-foreground transition-colors hover:bg-secondary/80",
-              menuOpen && "ring-1 ring-primary/50"
+              "flex shrink-0 items-center justify-center rounded-md p-1 text-muted-foreground opacity-60 transition-all hover:opacity-100 hover:bg-secondary/60 hover:text-foreground focus:opacity-100 focus:outline-none focus:ring-1 focus:ring-ring group-hover:opacity-100",
             )}
           >
             <MoreVertical className="h-4 w-4" />
@@ -210,7 +251,11 @@ export function SourceListItem({
           <DropdownMenuItem onClick={reindex} disabled={busy || isWorking}>
             <RefreshCw className="h-3.5 w-3.5" /> Re-index
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={remove} disabled={busy} className="text-destructive focus:text-destructive">
+          <DropdownMenuItem
+            onClick={remove}
+            disabled={busy}
+            className="text-destructive focus:text-destructive"
+          >
             <Trash2 className="h-3.5 w-3.5" /> Remove
           </DropdownMenuItem>
         </DropdownMenuContent>

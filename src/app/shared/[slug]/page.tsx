@@ -134,7 +134,7 @@ export default function SharedNotebookPage() {
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="prose prose-sm prose-invert max-w-none text-sm leading-relaxed">
+                    <div className="prose prose-sm max-w-none text-sm leading-relaxed">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
                     </div>
                     {m.citations && m.citations.length > 0 && (

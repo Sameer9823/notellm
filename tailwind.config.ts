@@ -2,9 +2,7 @@ import type { Config } from "tailwindcss";
 
 const config: Config = {
   darkMode: "class",
-  content: [
-    "./src/**/*.{ts,tsx}",
-  ],
+  content: ["./src/**/*.{ts,tsx}"],
   theme: {
     container: {
       center: true,
@@ -12,6 +10,12 @@ const config: Config = {
       screens: { "2xl": "1400px" },
     },
     extend: {
+      fontSize: {
+        ui: ["13px", { lineHeight: "1.4" }],
+        body: ["14px", { lineHeight: "1.5" }],
+        meta: ["12px", { lineHeight: "1.4" }],
+        micro: ["11px", { lineHeight: "1.4" }],
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
@@ -57,8 +61,14 @@ const config: Config = {
         sm: "calc(var(--radius) - 4px)",
       },
       keyframes: {
-        "accordion-down": { from: { height: "0" }, to: { height: "var(--radix-accordion-content-height)" } },
-        "accordion-up": { from: { height: "var(--radix-accordion-content-height)" }, to: { height: "0" } },
+        "accordion-down": {
+          from: { height: "0" },
+          to: { height: "var(--radix-accordion-content-height)" },
+        },
+        "accordion-up": {
+          from: { height: "var(--radix-accordion-content-height)" },
+          to: { height: "0" },
+        },
         "pulse-ring": {
           "0%": { transform: "scale(0.9)", opacity: "0.7" },
           "70%": { transform: "scale(1.4)", opacity: "0" },
@@ -72,6 +82,31 @@ const config: Config = {
       },
       fontFamily: {
         sans: ["var(--font-sans)", "system-ui", "sans-serif"],
+      },
+      typography: {
+        DEFAULT: {
+          css: {
+            "--tw-prose-body": "hsl(var(--foreground))",
+            "--tw-prose-body-size": "0.875rem",
+            "--tw-prose-headings": "hsl(var(--foreground))",
+            "--tw-prose-lead": "hsl(var(--muted-foreground))",
+            "--tw-prose-links": "hsl(var(--primary))",
+            "--tw-prose-bold": "hsl(var(--foreground))",
+            "--tw-prose-counters": "hsl(var(--muted-foreground))",
+            "--tw-prose-bullets": "hsl(var(--muted-foreground))",
+            "--tw-prose-hr": "hsl(var(--border))",
+            "--tw-prose-quotes": "hsl(var(--foreground))",
+            "--tw-prose-quote-borders": "hsl(var(--border))",
+            "--tw-prose-captions": "hsl(var(--muted-foreground))",
+            "--tw-prose-code": "hsl(var(--primary))",
+            "--tw-prose-pre-code": "hsl(var(--foreground))",
+            "--tw-prose-pre-bg": "hsl(var(--muted))",
+            "--tw-prose-th-borders": "hsl(var(--border))",
+            "--tw-prose-td-borders": "hsl(var(--border))",
+            "code::before": { content: '""' },
+            "code::after": { content: '""' },
+          },
+        },
       },
     },
   },

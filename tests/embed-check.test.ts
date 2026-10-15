@@ -75,6 +75,37 @@ describe("parseEmbedHeaders", () => {
   });
 });
 
+describe("preflight classifier behavior", () => {
+  it("DENY → false", () => {
+    const headers = new Headers({ "x-frame-options": "DENY" });
+    expect(parseEmbedHeaders(headers).embeddable).toBe(false);
+  });
+
+  it("SAMEORIGIN → false", () => {
+    const headers = new Headers({ "x-frame-options": "SAMEORIGIN" });
+    expect(parseEmbedHeaders(headers).embeddable).toBe(false);
+  });
+
+  it("frame-ancestors 'self' → false", () => {
+    const headers = new Headers({
+      "content-security-policy": "frame-ancestors 'self'",
+    });
+    expect(parseEmbedHeaders(headers).embeddable).toBe(false);
+  });
+
+  it("frame-ancestors * → true", () => {
+    const headers = new Headers({
+      "content-security-policy": "frame-ancestors *",
+    });
+    expect(parseEmbedHeaders(headers).embeddable).toBe(true);
+  });
+
+  it("no frame-ancestors or X-Frame-Options → true", () => {
+    const headers = new Headers({ "content-type": "text/html" });
+    expect(parseEmbedHeaders(headers).embeddable).toBe(true);
+  });
+});
+
 describe("extractFrameAncestors", () => {
   it("returns null when directive is absent", () => {
     expect(extractFrameAncestors("default-src 'self'; script-src 'self'")).toBeNull();

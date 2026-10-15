@@ -9,45 +9,197 @@
   everything sits on. Nothing here is a stock AI-app default.
 */
 
-@layer base {
-  :root {
-    --background: 208 28% 6%;        /* #0B0F14 ink */
-    --foreground: 200 20% 92%;       /* #E7ECEF */
+/* Light theme (default) */
+:root {
+  --background: 0 0% 100%; /* #FFFFFF */
+  --foreground: 220 15% 12%; /* #1A1C1F */
 
-    --card: 210 22% 9%;              /* #12181F panel */
-    --card-foreground: 200 20% 92%;
+  --card: 0 0% 100%; /* #FFFFFF */
+  --card-foreground: 220 15% 12%;
 
-    --popover: 210 24% 8%;
-    --popover-foreground: 200 20% 92%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 220 15% 12%;
 
-    --primary: 172 66% 62%;          /* #5EEAD4 teal — "indexed" */
-    --primary-foreground: 210 30% 8%;
+  --primary: 172 66% 26%; /* #1A8A6D teal — darker for WCAG AA on white (5.2:1) */
+  --primary-foreground: 0 0% 100%;
 
-    --secondary: 210 18% 14%;
-    --secondary-foreground: 200 20% 92%;
+  --secondary: 220 15% 96%; /* #F1F3F5 */
+  --secondary-foreground: 220 15% 12%;
 
-    --muted: 210 16% 14%;
-    --muted-foreground: 205 12% 62%; /* #8B98A5 */
+  --muted: 220 15% 95%; /* #F3F4F6 - lighter for better contrast with muted-foreground */
+  --muted-foreground: 220 10% 40%; /* #5E6676 - darker for WCAG AA on muted (4.5:1) */
 
-    --accent: 38 96% 58%;            /* #FBBF24 amber — "indexing" */
-    --accent-foreground: 210 30% 8%;
+  --accent: 38 96% 50%; /* #F59E0B amber — "indexing" */
+  --accent-foreground: 0 0% 100%;
+  --accent-text: 32 95% 32%; /* darker amber for text on light bg */
 
-    --success: 172 66% 62%;
-    --success-foreground: 210 30% 8%;
+  --success: 172 66% 26%;
+  --success-foreground: 0 0% 100%;
+  --success-text: 172 66% 26%; /* same as primary for light */
 
-    --destructive: 6 78% 62%;
-    --destructive-foreground: 0 0% 98%;
+  --destructive: 6 78% 45%; /* darker red for WCAG AA on white (4.8:1) */
+  --destructive-foreground: 0 0% 100%;
 
-    --border: 210 18% 16%;           /* #1F2833 */
-    --input: 210 18% 16%;
-    --ring: 172 66% 62%;
+  --border: 220 15% 88%; /* #DCE0E5 */
+  --input: 220 15% 88%;
+  --ring: 172 66% 26%;
 
-    --radius: 0.75rem;
+  --radius: 0.75rem;
 
-    --font-sans: "Inter", system-ui, sans-serif;
-    --font-display: "Space Grotesk", var(--font-sans);
-    --font-mono: "JetBrains Mono", ui-monospace, monospace;
-  }
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-display: "Space Grotesk", var(--font-sans);
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  color-scheme: light;
+}
+
+/* Dark theme */
+.dark {
+  --background: 208 28% 6%; /* #0B0F14 ink */
+  --foreground: 200 20% 92%; /* #E7ECEF */
+
+  --card: 210 22% 9%; /* #12181F panel */
+  --card-foreground: 200 20% 92%;
+
+  --popover: 210 24% 8%;
+  --popover-foreground: 200 20% 92%;
+
+  --primary: 172 66% 62%; /* #5EEAD4 teal — "indexed" */
+  --primary-foreground: 210 30% 8%;
+
+  --secondary: 210 18% 14%;
+  --secondary-foreground: 200 20% 92%;
+
+  --muted: 210 16% 14%;
+  --muted-foreground: 205 12% 62%; /* #8B98A5 */
+
+  --accent: 38 96% 58%; /* #FBBF24 amber — "indexing" */
+  --accent-foreground: 210 30% 8%;
+  --accent-text: 38 96% 58%; /* same as accent for dark */
+
+  --success: 172 66% 62%;
+  --success-foreground: 210 30% 8%;
+  --success-text: 172 66% 62%;
+
+  --destructive: 6 78% 62%;
+  --destructive-foreground: 0 0% 98%;
+
+  --border: 210 18% 16%; /* #1F2833 */
+  --input: 210 18% 16%;
+  --ring: 172 66% 62%;
+
+  --radius: 0.75rem;
+
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-display: "Space Grotesk", var(--font-sans);
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  color-scheme: dark;
+}
+
+/* Accent presets — default is teal (indexed) */
+/* These override --primary and related tokens when applied via data-accent on <html> */
+
+/* Teal (default) — indexed/success */
+:root[data-accent="teal"],
+.dark[data-accent="teal"] {
+  --primary: 172 66% 62%;
+  --primary-foreground: 210 30% 8%;
+  --ring: 172 66% 62%;
+  --success: 172 66% 62%;
+  --success-text: 172 66% 62%;
+}
+:root[data-accent="teal"] {
+  --primary: 172 66% 26%;
+  --primary-foreground: 0 0% 100%;
+  --ring: 172 66% 26%;
+  --success: 172 66% 26%;
+  --success-text: 172 66% 26%;
+}
+
+/* Amber — indexing/in-progress */
+:root[data-accent="amber"],
+.dark[data-accent="amber"] {
+  --primary: 38 96% 58%;
+  --primary-foreground: 210 30% 8%;
+  --ring: 38 96% 58%;
+  --success: 38 96% 58%;
+  --success-text: 38 96% 58%;
+}
+:root[data-accent="amber"] {
+  --primary: 38 96% 32%;
+  --primary-foreground: 0 0% 100%;
+  --ring: 38 96% 32%;
+  --success: 38 96% 32%;
+  --success-text: 38 96% 32%;
+}
+
+/* Violet — creative/ai */
+:root[data-accent="violet"],
+.dark[data-accent="violet"] {
+  --primary: 262 83% 58%;
+  --primary-foreground: 0 0% 100%;
+  --ring: 262 83% 58%;
+  --success: 262 83% 58%;
+  --success-text: 262 83% 58%;
+}
+:root[data-accent="violet"] {
+  --primary: 262 83% 38%;
+  --primary-foreground: 0 0% 100%;
+  --ring: 262 83% 38%;
+  --success: 262 83% 38%;
+  --success-text: 262 83% 38%;
+}
+
+/* Rose — attention/urgent */
+:root[data-accent="rose"],
+.dark[data-accent="rose"] {
+  --primary: 346 87% 58%;
+  --primary-foreground: 0 0% 100%;
+  --ring: 346 87% 58%;
+  --success: 346 87% 58%;
+  --success-text: 346 87% 58%;
+}
+:root[data-accent="rose"] {
+  --primary: 346 87% 38%;
+  --primary-foreground: 0 0% 100%;
+  --ring: 346 87% 38%;
+  --success: 346 87% 38%;
+  --success-text: 346 87% 38%;
+}
+
+/* Sky — calm/info */
+:root[data-accent="sky"],
+.dark[data-accent="sky"] {
+  --primary: 199 89% 48%;
+  --primary-foreground: 0 0% 100%;
+  --ring: 199 89% 48%;
+  --success: 199 89% 48%;
+  --success-text: 199 89% 48%;
+}
+:root[data-accent="sky"] {
+  --primary: 199 89% 32%;
+  --primary-foreground: 0 0% 100%;
+  --ring: 199 89% 32%;
+  --success: 199 89% 32%;
+  --success-text: 199 89% 32%;
+}
+
+/* Emerald — growth/positive */
+:root[data-accent="emerald"],
+.dark[data-accent="emerald"] {
+  --primary: 160 84% 39%;
+  --primary-foreground: 0 0% 100%;
+  --ring: 160 84% 39%;
+  --success: 160 84% 39%;
+  --success-text: 160 84% 39%;
+}
+:root[data-accent="emerald"] {
+  --primary: 160 84% 24%;
+  --primary-foreground: 0 0% 100%;
+  --ring: 160 84% 24%;
+  --success: 160 84% 24%;
+  --success-text: 160 84% 24%;
 }
 
 @layer base {
@@ -94,10 +246,23 @@
     color: inherit;
     border-radius: 2px;
   }
+
+  /* Status dot helpers — use semantic tokens, never accent-dependent */
+  .status-ready {
+    background-color: hsl(var(--success));
+  }
+  .status-indexing {
+    background-color: hsl(var(--accent));
+  }
+  .status-failed {
+    background-color: hsl(var(--destructive));
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;

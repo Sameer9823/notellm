@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import Link from "next/link";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -62,6 +62,7 @@ export function ArtifactsPanel({
   onClose: () => void;
   onSwitchTab?: (id: StudioTabId) => void;
 }) {
+  if (!open) return null;
   const { artifacts, loading, generate, remove } = useArtifacts(notebookId);
   const [picking, setPicking] = useState(false);
   const [starting, setStarting] = useState<ArtifactType | null>(null);
@@ -93,62 +94,50 @@ export function ArtifactsPanel({
 
   return (
     <>
-      <AnimatePresence>
-        {open && (
-          <motion.aside
-            initial={{ opacity: 0, x: 24 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 24 }}
-            transition={{ type: "spring", stiffness: 260, damping: 30 }}
-            className="fixed inset-0 z-50 overflow-hidden bg-card lg:static lg:z-auto lg:h-full lg:w-[380px] lg:shrink-0 lg:border-l lg:border-border lg:bg-card/40"
-          >
-            <div className="flex h-full w-full flex-col">
-              <div className="flex items-center justify-between gap-2 border-b border-border p-3">
-                <div className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                  <GraduationCap className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">Study tools</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  {!picking && (
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPicking(true)} title="Generate new">
-                      <Plus className="h-3.5 w-3.5" />
-                    </Button>
-                  )}
-                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose}>
-                    <X className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
+      <div className="flex h-full flex-col min-w-0">
+        <div className="flex items-center justify-between gap-2 border-b border-border p-3">
+          <div className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            <GraduationCap className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">Study tools</span>
+          </div>
+          <div className="flex items-center gap-1">
+            {!picking && (
+              <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => setPicking(true)} title="Generate new">
+                <Plus className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={onClose}>
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+
+        {onSwitchTab && <StudioTabs active="study" onSelect={onSwitchTab} />}
+
+        <ScrollArea className="flex-1">
+          <div className="p-4">
+            {picking ? (
+              <TypePicker hasReadySources={hasReadySources} starting={starting} onPick={handleGenerate} onCancel={() => setPicking(false)} />
+            ) : loading ? (
+              <div className="text-xs text-muted-foreground">Loading…</div>
+            ) : artifacts.length === 0 ? (
+              <EmptyState hasReadySources={hasReadySources} onGenerate={() => setPicking(true)} />
+            ) : (
+              <div className="space-y-2">
+                {artifacts.map((a) => (
+                  <ArtifactRow key={a.id} artifact={a} onOpen={() => setSelected(a)} onDelete={() => handleDelete(a.id)} />
+                ))}
               </div>
-
-              {onSwitchTab && <StudioTabs active="study" onSelect={onSwitchTab} />}
-
-              <ScrollArea className="flex-1">
-                <div className="p-4">
-                  {picking ? (
-                    <TypePicker hasReadySources={hasReadySources} starting={starting} onPick={handleGenerate} onCancel={() => setPicking(false)} />
-                  ) : loading ? (
-                    <div className="text-xs text-muted-foreground">Loading…</div>
-                  ) : artifacts.length === 0 ? (
-                    <EmptyState hasReadySources={hasReadySources} onGenerate={() => setPicking(true)} />
-                  ) : (
-                    <div className="space-y-2">
-                      {artifacts.map((a) => (
-                        <ArtifactRow key={a.id} artifact={a} onOpen={() => setSelected(a)} onDelete={() => handleDelete(a.id)} />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </ScrollArea>
-            </div>
-          </motion.aside>
-        )}
-      </AnimatePresence>
+            )}
+          </div>
+        </ScrollArea>
+      </div>
 
       {/* Full-screen artifact viewer: opened whenever an artifact row is
           clicked, regardless of type. Replaces the old behavior of cramming
           content (especially the mind map graph) into the 380px sidebar.
-          Lives outside AnimatePresence — it's an unrelated overlay, not one
-          of the sidebar's enter/exit-animated children. */}
+          Lives outside the panel — it's an unrelated overlay, not part of
+          the sidebar content. */}
       <Dialog open={Boolean(selected)} onOpenChange={(next) => !next && setSelected(null)}>
         <DialogContent className="flex h-[90vh] w-[95vw] max-w-6xl flex-col overflow-hidden p-0">
           {selected && (
@@ -299,7 +288,7 @@ function ArtifactViewer({ artifact, notebookId }: { artifact: ArtifactDTO; noteb
       const content = artifact.content as { markdown?: string } | null;
       if (!content?.markdown) return <NoContent />;
       return (
-        <div className="prose prose-sm prose-invert max-w-none">
+        <div className="prose prose-sm max-w-none">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.markdown}</ReactMarkdown>
         </div>
       );
@@ -369,7 +358,7 @@ function ArtifactViewer({ artifact, notebookId }: { artifact: ArtifactDTO; noteb
       const content = artifact.content as { markdown?: string; sections?: { title: string; content: string }[] } | null;
       if (!content?.markdown) return <NoContent />;
       return (
-        <div className="prose prose-sm prose-invert max-w-none">
+        <div className="prose prose-sm max-w-none">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.markdown}</ReactMarkdown>
         </div>
       );

@@ -10,7 +10,13 @@ import type { SourceStatus } from "@/types";
  * solid teal dot with a short confirming pop the moment it's ready. Failed
  * sources get a static red dot with no motion — motion here means "working."
  */
-export function StatusDot({ status, size = "md" }: { status: SourceStatus; size?: "sm" | "md" }) {
+export function StatusDot({
+  status,
+  size = "md",
+}: {
+  status: SourceStatus;
+  size?: "sm" | "md";
+}) {
   const dim = size === "sm" ? "h-1.5 w-1.5" : "h-2 w-2";
   const ring = size === "sm" ? "h-1.5 w-1.5" : "h-2 w-2";
 
@@ -22,7 +28,10 @@ export function StatusDot({ status, size = "md" }: { status: SourceStatus; size?
           initial={{ scale: 0.4, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ type: "spring", stiffness: 500, damping: 20 }}
-          className={cn("rounded-full bg-primary shadow-[0_0_8px_hsl(var(--primary)/0.7)]", dim)}
+          className={cn(
+            "status-ready rounded-full shadow-[0_0_8px_hsl(var(--success)/0.7)]",
+            dim,
+          )}
         />
       </span>
     );
@@ -39,13 +48,13 @@ export function StatusDot({ status, size = "md" }: { status: SourceStatus; size?
             transition={{ duration: 1.6, repeat: Infinity, ease: "easeOut" }}
           />
         </AnimatePresence>
-        <span className={cn("relative rounded-full bg-accent", dim)} />
+        <span className={cn("relative rounded-full status-indexing", dim)} />
       </span>
     );
   }
 
   // FAILED
-  return <span className={cn("rounded-full bg-destructive", dim)} />;
+  return <span className={cn("rounded-full status-failed", dim)} />;
 }
 
 export function statusLabel(status: SourceStatus) {

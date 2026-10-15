@@ -49,16 +49,15 @@ export function printAsPdf(title: string, bodyHtml: string) {
 </html>`);
   win.document.close();
   win.focus();
-  // Give the new document a beat to lay out before invoking print.
   setTimeout(() => win.print(), 300);
 }
 
 function escapeHtml(s: string): string {
   return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/&/g, "&")
+    .replace(/</g, "<")
+    .replace(/>/g, ">")
+    .replace(/"/g, "\""); 
 }
 
 function citationLine(c: Citation): string {

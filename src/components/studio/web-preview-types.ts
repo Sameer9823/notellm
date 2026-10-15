@@ -1,5 +1,7 @@
+export type EmbeddableResult = true | false | "unknown";
+
 export type WebPreviewResult = {
-  embeddable: boolean;
+  embeddable: EmbeddableResult;
   finalUrl: string;
   error?: string;
   reason?: string;
