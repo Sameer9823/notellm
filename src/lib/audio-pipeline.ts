@@ -6,6 +6,10 @@ import { cloudinaryEnabled, uploadBuffer } from "@/lib/cloudinary";
 
 const MAX_CONTEXT_CHARS = 14000; // keep the script-generation prompt bounded
 
+function escapeAttr(s: string | undefined): string {
+  return (s ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
 /**
  * Runs the full audio-overview pipeline for a notebook: assemble context
  * from ready sources -> generate a two-host dialogue script -> synthesize
@@ -48,8 +52,11 @@ export async function runAudioPipeline(audioId: string) {
     const perSourceChars = Math.max(3000, Math.floor(MAX_CONTEXT_CHARS / sources.length));
 
     const context = sources
-      .map((s: { title: string; rawText: string | null; type: string }) => `Source: "${s.title}" (${s.type})\n${(s.rawText ?? "").slice(0, perSourceChars)}`)
-      .join("\n\n---\n\n")
+      .map(
+        (s: { title: string; rawText: string | null; type: string }) =>
+          `<source id="${escapeAttr(s.title)}" type="${s.type}">\n${(s.rawText ?? "").slice(0, perSourceChars)}\n</source>`
+      )
+      .join("\n\n")
       .slice(0, MAX_CONTEXT_CHARS);
 
     await mark(overview.id, "SCRIPTING", "Writing the podcast script", 25);

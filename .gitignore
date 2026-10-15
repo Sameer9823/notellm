@@ -16,3 +16,11 @@ tsconfig.tsbuildinfo
 # Vite cache
 .vitest
 
+# Test / build artifacts (never commit generated output)
+playwright-report/
+test-results/
+coverage/
+
+# Local environment overrides (secrets must never be committed)
+.env*.local
+

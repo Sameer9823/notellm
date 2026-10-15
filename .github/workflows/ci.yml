@@ -16,6 +16,7 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm ci
+      - run: npm audit --omit=dev --audit-level=high
       - run: npx prisma generate
       - run: npx tsc --noEmit
       - run: npm test
@@ -39,6 +40,7 @@ jobs:
         run: npx playwright test
         env:
           PLAYWRIGHT_BASE_URL: http://localhost:3000
+          ENABLE_TEST_HARNESS: "1"
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4

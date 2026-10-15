@@ -66,7 +66,20 @@ export const RATE_LIMITS = {
    webPreview: { limit: 15, windowSec: 60 },
    // Screenshot generation — expensive external API + bandwidth.
    screenshot: { limit: 5, windowSec: 60 },
-  memoryWrite: { limit: 20, windowSec: 60 },
+   memoryWrite: { limit: 20, windowSec: 60 },
+  // IP-based limits for public/unauthenticated routes (applied in middleware).
+  // These are generous — the goal is abuse prevention, not quota enforcement.
+  ipPublic: { limit: 300, windowSec: 60 },
+  ipHealth: { limit: 600, windowSec: 60 },
+  ipBillingWebhook: { limit: 300, windowSec: 60 },
+  // Per-user limits for mutation-heavy / quota-sensitive routes.
+  sourceReindex: { limit: 3, windowSec: 60 },
+  notebookMutate: { limit: 10, windowSec: 60 },
+  shareToggle: { limit: 10, windowSec: 60 },
+  notes: { limit: 30, windowSec: 60 },
+  voiceMessages: { limit: 20, windowSec: 60 },
+  billingCheckout: { limit: 5, windowSec: 60 },
+  billingPortal: { limit: 5, windowSec: 60 },
 } as const;
 
 /** Builds a standard 429 response with the headers clients expect. */

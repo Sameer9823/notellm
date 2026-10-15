@@ -106,8 +106,8 @@ export async function searchNotebook(notebookId: string, vector: number[], limit
   await ensureCollection();
   const must: Record<string, unknown>[] = [{ key: "notebookId", match: { value: notebookId } }];
   if (sourceId) must.push({ key: "sourceId", match: { value: sourceId } });
-  const res = await qdrant.search(COLLECTION, {
-    vector,
+  const res = await qdrant.query(COLLECTION, {
+    query: vector,
     limit,
     filter: { must },
     with_payload: true,
@@ -178,8 +178,8 @@ export async function deleteMemoryVector(id: string) {
  *  relevant facts don't fall out of context once a user has many memories. */
 export async function searchMemories(userId: string, vector: number[], limit = 8) {
   await ensureMemoryCollection();
-  const res = await qdrant.search(MEMORY_COLLECTION, {
-    vector,
+  const res = await qdrant.query(MEMORY_COLLECTION, {
+    query: vector,
     limit,
     filter: { must: [{ key: "userId", match: { value: userId } }] },
     with_payload: true,

@@ -68,7 +68,7 @@ async function extractUrlDirect(url: string): Promise<UrlExtractResult> {
   const reader = new Readability(dom.window.document);
   const article = reader.parse();
 
-  if (!article || !article.textContent.trim()) {
+  if (!article || !article.textContent || !article.textContent.trim()) {
     throw new Error("Could not extract readable content from this page — it may not be a standard article layout");
   }
 

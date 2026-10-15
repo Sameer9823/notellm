@@ -29,6 +29,7 @@ export default defineConfig({
     timeout: 120 * 1000,
     env: {
       NODE_ENV: "development",
+      ENABLE_TEST_HARNESS: "1",
     },
   },
 });

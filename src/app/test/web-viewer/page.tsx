@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { StudioPanel } from "@/components/studio/StudioPanel";
 import type { Citation } from "@/types";
@@ -20,6 +21,14 @@ const mockCitation: Citation = {
 };
 
 export default function WebViewerTestPage() {
+  return (
+    <Suspense fallback={null}>
+      <WebViewerInner />
+    </Suspense>
+  );
+}
+
+function WebViewerInner() {
   const searchParams = useSearchParams();
   if (searchParams.get("harness") !== "1") return null;
 
