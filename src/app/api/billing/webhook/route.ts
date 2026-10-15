@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { stripe, isStripeConfigured } from "@/lib/stripe";
+import { serverEnv } from "@/lib/env";
 import {
   handleCheckoutCompleted,
   handleInvoicePaid,
@@ -17,7 +18,7 @@ export async function POST(req: Request) {
   }
 
   const signature = req.headers.get("stripe-signature");
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  const webhookSecret = serverEnv.stripe.webhookSecret;
 
   if (!signature || !webhookSecret) {
     return NextResponse.json({ error: "Missing signature or webhook secret" }, { status: 400 });

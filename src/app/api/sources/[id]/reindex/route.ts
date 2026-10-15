@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 import { setProgress } from "@/lib/redis";
 import { safeSend } from "@/lib/inngest/client";
 
+export const maxDuration = 15;
+
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { createBillingPortalSession } from "@/lib/billing";
+import { clientEnv } from "@/lib/env";
 
 export async function POST(req: NextRequest) {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
+  const appUrl = clientEnv.appUrl;
 
   try {
     const portal = await createBillingPortalSession(userId, appUrl);

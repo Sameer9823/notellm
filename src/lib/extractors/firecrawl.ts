@@ -1,4 +1,5 @@
 import type { UrlExtractResult } from "./url";
+import { serverEnv } from "@/lib/env";
 
 /**
  * Firecrawl (https://firecrawl.dev) scrape API — renders JS, dodges most
@@ -33,16 +34,11 @@ type FirecrawlResponse = {
 };
 
 export function firecrawlEnabled(): boolean {
-  return Boolean(process.env.FIRECRAWL_API_KEY);
+  return serverEnv.firecrawl.enabled;
 }
 
-/**
- * Scrapes a single URL through Firecrawl. Returns null (never throws) when
- * Firecrawl isn't configured, so callers can unconditionally try this first
- * and fall back without special-casing the "no key" case everywhere.
- */
 export async function extractUrlWithFirecrawl(url: string): Promise<UrlExtractResult | null> {
-  const apiKey = process.env.FIRECRAWL_API_KEY;
+  const apiKey = serverEnv.firecrawl.apiKey;
   if (!apiKey) return null;
 
   let res: Response;

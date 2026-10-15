@@ -19,6 +19,8 @@ const bodySchema = z.object({
 // trailing citations payload, without needing a second round-trip.
 const CITATIONS_MARKER = "\n\u0000CITATIONS\u0000";
 
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

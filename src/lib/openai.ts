@@ -1,10 +1,12 @@
 import OpenAI from "openai";
+import { serverEnv } from "@/lib/env";
 
-export const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const _env = serverEnv.openai;
+export const openai = new OpenAI({ apiKey: _env.apiKey, baseURL: _env.baseUrl });
 
-export const CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || "gpt-4o-mini";
-export const EMBEDDING_MODEL = process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small";
-export const TTS_MODEL = process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts";
+export const CHAT_MODEL = _env.chatModel;
+export const EMBEDDING_MODEL = _env.embeddingModel;
+export const TTS_MODEL = _env.ttsModel;
 
 function escapeAttr(s: string | undefined): string {
   return (s ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");

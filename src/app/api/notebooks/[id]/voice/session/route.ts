@@ -4,9 +4,21 @@ import { db } from "@/lib/db";
 import { redis } from "@/lib/redis";
 import { consumeCredits, creditsExhaustedResponse } from "@/lib/credits";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
-import { tavilyEnabled } from "@/lib/tavily";
 import { createRealtimeClientSecret } from "samai-sdk/voice";
-import { OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_REALTIME_MODEL, OPENAI_REALTIME_VOICE, VOICE_TOKEN_SECRET, VOICE_TOKEN_TTL_SECONDS, VOICE_CREDIT_COST_PER_BLOCK, VOICE_CREDIT_BLOCK_MINUTES, signToolToken } from "@/lib/voice/server-config";
+import {
+  OPENAI_API_KEY,
+  OPENAI_BASE_URL,
+  OPENAI_REALTIME_MODEL,
+  OPENAI_REALTIME_VOICE,
+  VOICE_TOKEN_SECRET,
+  VOICE_TOKEN_TTL_SECONDS,
+  VOICE_CREDIT_COST_PER_BLOCK,
+  VOICE_CREDIT_BLOCK_MINUTES,
+  signToolToken,
+} from "@/lib/voice/server-config";
+import { tavilyEnabled } from "@/lib/tavily";
+
+export const maxDuration = 30;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

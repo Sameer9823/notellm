@@ -3,6 +3,7 @@ import { YoutubeTranscript } from "youtube-transcript";
 import { ProxyAgent, fetch as undiciFetch } from "undici";
 import type { Cue } from "@/lib/chunking";
 import { describeError } from "@/lib/utils";
+import { serverEnv } from "@/lib/env";
 
 export type YoutubeExtractResult = {
   videoId: string;
@@ -27,7 +28,7 @@ export function parseYoutubeId(url: string): string {
 }
 
 // --- Proxy setup -----------------------------------------------------
-const PROXY_URL = process.env.YT_PROXY_URL; // http://user:pass@p.webshare.io:80
+const PROXY_URL = serverEnv.ytProxyUrl; // http://user:pass@p.webshare.io:80
 const proxyAgent = PROXY_URL ? new ProxyAgent(PROXY_URL) : undefined;
 
 async function proxiedFetch(input: any, init: any = {}): Promise<Response> {
@@ -131,7 +132,7 @@ async function getInnertube(forceFresh = false): Promise<Innertube> {
 // works locally often fails once deployed. SearchApi.io proxies the
 // request through its own infra, sidestepping the IP block entirely.
 // Docs: https://www.searchapi.io/docs/youtube-transcripts
-const SEARCHAPI_KEY = process.env.SEARCHAPI_API_KEY;
+const SEARCHAPI_KEY = serverEnv.searchApiKey;
 
 type SearchApiTranscriptSegment = { text: string; start: number; duration: number };
 type SearchApiTranscriptResponse = {

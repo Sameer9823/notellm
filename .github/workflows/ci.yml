@@ -18,10 +18,18 @@ jobs:
       - run: npm ci
       - run: npm audit --omit=dev --audit-level=high
       - run: npx prisma generate
+      - run: npx prisma validate
       - run: npx tsc --noEmit
       - run: npm test
       - run: npm run lint
       - run: npm run build
+      # Apply DB migrations in CI when a DATABASE_URL is available
+      # (e.g. staging/preview environments). Production deployments must
+      # run `prisma migrate deploy` before the app starts — see AGENTS.md.
+      - run: npx prisma migrate deploy
+        if: ${{ env.DATABASE_URL != '' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || '' }}
 
   playwright:
     runs-on: ubuntu-latest

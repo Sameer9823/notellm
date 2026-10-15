@@ -16,8 +16,9 @@
  */
 import { Worker } from "bullmq";
 import { runIngestPipeline } from "@/lib/ingest";
+import { serverEnv } from "@/lib/env";
 
-const connection = { url: process.env.REDIS_URL as string };
+const connection = { url: serverEnv.redis.url };
 
 const worker = new Worker(
   "source-indexing",

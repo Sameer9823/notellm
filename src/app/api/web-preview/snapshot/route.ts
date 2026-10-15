@@ -7,6 +7,8 @@ import { screenshotUrl } from "@/lib/screenshot";
 import { getCachedSnapshotUrl, setCachedSnapshotUrl } from "@/lib/redis";
 import { validateAndResolveUrl } from "@/lib/ssrf";
 
+export const maxDuration = 30;
+
 export async function POST(req: NextRequest) {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

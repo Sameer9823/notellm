@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { Prisma } from "@prisma/client";
+import { serverEnv } from "@/lib/env";
 
 /**
  * Simple token/credit budget per user, shared across every notebook they
@@ -17,10 +18,10 @@ import { Prisma } from "@prisma/client";
  */
 
 /** Max credits a user has available per window. */
-export const CREDITS_MAX = Number(process.env.CREDITS_MAX_PER_WINDOW ?? 200);
+export const CREDITS_MAX = serverEnv.credits.maxPerWindow;
 
 /** Window length in hours before the balance refreshes back to CREDITS_MAX. */
-export const CREDITS_WINDOW_HOURS = Number(process.env.CREDITS_WINDOW_HOURS ?? 6);
+export const CREDITS_WINDOW_HOURS = serverEnv.credits.windowHours;
 
 export const CREDITS_WINDOW_MS = CREDITS_WINDOW_HOURS * 60 * 60 * 1000;
 

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { redis } from "@/lib/redis";
-import { qdrant, COLLECTION } from "@/lib/qdrant";
+import { qdrant } from "@/lib/qdrant";
+import { serverEnv } from "@/lib/env";
 
 /** Cache TTL in seconds for readiness results. */
 const CACHE_TTL = 15;
@@ -30,7 +31,7 @@ async function timed(fn: () => Promise<unknown>): Promise<CheckResult> {
  */
 export async function GET(req: NextRequest) {
   const token = req.headers.get("x-health-token");
-  const expectedToken = process.env.HEALTH_TOKEN;
+  const expectedToken = serverEnv.healthToken;
   if (!expectedToken || token !== expectedToken) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

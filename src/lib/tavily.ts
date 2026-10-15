@@ -6,11 +6,20 @@
  * extractUrl -> chunk -> embed pipeline as every other source.
  *
  * This module only *searches* — it never fetches full page content itself,
- * so results here don't overlap with (and don't replace) Firecrawl, which
+ *  so results here don't overlap with (and don't replace) Firecrawl, which
  * is what actually extracts each chosen page's content during ingest.
  */
 
+import { serverEnv, clientEnv } from "@/lib/env";
+import { withRetry, CircuitBreaker } from "@/lib/outbound";
+
 const TAVILY_ENDPOINT = "https://api.tavily.com/search";
+
+const tavilyBreaker = new CircuitBreaker("tavily", {
+  failureThreshold: 5,
+  recoveryTimeoutMs: 30_000,
+  monitor: !serverEnv.isProduction,
+});
 
 export type TavilySearchResult = {
   title: string;
@@ -20,37 +29,39 @@ export type TavilySearchResult = {
 };
 
 export function tavilyEnabled(): boolean {
-  return Boolean(process.env.TAVILY_API_KEY);
+  return serverEnv.tavily.enabled;
 }
 
-/** Client-safe check — uses a NEXT_PUBLIC_ env var so the browser can
- *  conditionally register the search_web voice tool without exposing the
- *  actual TAVILY_API_KEY. Both must be set together. */
 export function tavilyEnabledPublic(): boolean {
-  return Boolean(process.env.NEXT_PUBLIC_TAVILY_ENABLED);
+  return clientEnv.tavilyEnabled;
 }
 
 export async function tavilySearch(query: string, maxResults = 6): Promise<TavilySearchResult[]> {
-  const apiKey = process.env.TAVILY_API_KEY;
+  const apiKey = serverEnv.tavily.apiKey;
   if (!apiKey) {
     throw new Error("Web search isn't configured (missing TAVILY_API_KEY)");
   }
 
   let res: Response;
   try {
-    res = await fetch(TAVILY_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        api_key: apiKey,
-        query,
-        max_results: Math.min(Math.max(maxResults, 1), 10),
-        search_depth: "basic",
-        include_answer: false,
-        include_raw_content: false,
-      }),
-      signal: AbortSignal.timeout(20000),
-    });
+    res = await tavilyBreaker.call(() =>
+      withRetry(() =>
+        fetch(TAVILY_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            api_key: apiKey,
+            query,
+            max_results: Math.min(Math.max(maxResults, 1), 10),
+            search_depth: "basic",
+            include_answer: false,
+            include_raw_content: false,
+          }),
+          signal: AbortSignal.timeout(20000),
+        }),
+        { attempts: 2, baseDelayMs: 500 }
+      )
+    );
   } catch (err) {
     const cause = err instanceof Error ? err.message : String(err);
     throw new Error(`Couldn't reach Tavily — ${cause}`);

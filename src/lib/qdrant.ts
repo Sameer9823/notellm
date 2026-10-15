@@ -1,18 +1,20 @@
 import { QdrantClient } from "@qdrant/js-client-rest";
+import { serverEnv } from "@/lib/env";
 
-export const COLLECTION = process.env.QDRANT_COLLECTION || "notebook_chunks";
-const EMBEDDING_DIM = 1536; // text-embedding-3-small
+const _env = serverEnv.qdrant;
+export const COLLECTION = _env.collection;
+const EMBEDDING_DIM = 1536;
 
 const globalForQdrant = globalThis as unknown as { qdrant?: QdrantClient };
 
 export const qdrant =
   globalForQdrant.qdrant ??
   new QdrantClient({
-    url: process.env.QDRANT_URL as string,
-    apiKey: process.env.QDRANT_API_KEY,
+    url: _env.url,
+    apiKey: _env.apiKey,
   });
 
-if (process.env.NODE_ENV !== "production") globalForQdrant.qdrant = qdrant;
+if (!serverEnv.isProduction) globalForQdrant.qdrant = qdrant;
 
 let ensured = false;
 
@@ -139,7 +141,7 @@ export async function retrieveVectors(ids: string[]): Promise<Map<string, number
 // never has to filter past millions of RAG chunk vectors, or risk a
 // notebookId/userId filter mismatch leaking one user's chunks into
 // another's memory context (or vice versa).
-export const MEMORY_COLLECTION = process.env.QDRANT_MEMORY_COLLECTION || "user_memories";
+export const MEMORY_COLLECTION = _env.memoryCollection;
 let memoryCollectionEnsured = false;
 
 async function ensureMemoryCollection() {

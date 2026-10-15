@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently -n \"next,inngest\" \"next dev\" \"npx --yes inngest-cli@latest dev\"",
     "build": "prisma generate && next build",
-    "start": "next start",
+    "start": "prisma migrate deploy && next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -14,6 +14,7 @@
     "prepush": "npm run typecheck && npm test",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate && patch-package",
     "prepare": "husky",
@@ -62,6 +63,7 @@
     "samai-sdk": "0.3.6",
     "sonner": "1.7.1",
     "stripe": "18.0.0",
+    "svix": "^2.8.0",
     "tailwind-merge": "2.6.0",
     "undici": "^8.12.1",
     "uuid": "^11.1.1",
@@ -85,6 +87,7 @@
     "eslint": "9.18.0",
     "eslint-config-next": "16.4.1",
     "husky": "^9.1.7",
+    "inngest-cli": "^1.46.0",
     "patch-package": "^8.0.1",
     "postcss": "8.5.1",
     "prisma": "6.2.1",
@@ -107,5 +110,8 @@
     "qs": "^6.16.1",
     "ws": "^8.22.0",
     "undici": "^8.12.1"
+  },
+  "allowScripts": {
+    "inngest-cli@1.46.0": true
   }
 }

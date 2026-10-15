@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/ui/logo";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 export default async function LandingPage() {
   const { userId } = await auth();
@@ -33,6 +34,7 @@ export default async function LandingPage() {
           Footnote
         </div>
         <div className="flex items-center gap-3">
+          <ThemeToggle />
           <Link href="/sign-in">
             <Button variant="ghost" size="sm">
               Sign in

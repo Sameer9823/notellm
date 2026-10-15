@@ -8,6 +8,8 @@ import { redis } from "@/lib/redis";
 import { createHash } from "node:crypto";
 
 const READER_TEXT_LIMIT = 20_000;
+
+export const maxDuration = 30;
 const CACHE_TTL = 10 * 60; // 10 minutes
 
 // In-memory cache fallback (used when Redis is unavailable)

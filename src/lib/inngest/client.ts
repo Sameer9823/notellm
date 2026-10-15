@@ -1,4 +1,5 @@
 import { Inngest } from "inngest";
+import { serverEnv, clientEnv } from "@/lib/env";
 
 /**
  * Durable background-job runner, ported from sourcelm's Inngest setup.
@@ -61,9 +62,7 @@ export type InngestEvents = SourceCreatedEvent | ArtifactGenerateEvent | AudioGe
  */
 
 const devServerOrigin =
-  process.env.INNGEST_DEVSERVER_URL ||
-  process.env.NEXT_PUBLIC_INNGEST_DEVSERVER_URL ||
-  process.env.REACT_APP_INNGEST_DEVSERVER_URL ||
+  serverEnv.inngest.devserverUrl ||
   "http://localhost:8288";
 
 // Briefly remembers the dev server was unreachable so a burst of enqueues
@@ -74,7 +73,7 @@ const devServerOrigin =
 let devServerKnownDownUntil = 0;
 
 async function devServerReachable(): Promise<boolean> {
-  if (process.env.NODE_ENV === "production") return true;
+  if (serverEnv.isProduction) return true;
   const now = Date.now();
   if (now < devServerKnownDownUntil) return false;
 
@@ -96,7 +95,7 @@ async function devServerReachable(): Promise<boolean> {
 }
 
 export async function safeSend<T extends InngestEvents>(event: T): Promise<boolean> {
-  if (process.env.NODE_ENV !== "production") {
+   if (!serverEnv.isProduction) {
     const reachable = await devServerReachable();
     if (!reachable) {
       // eslint-disable-next-line no-console

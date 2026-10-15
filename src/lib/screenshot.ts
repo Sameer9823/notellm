@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { getCachedSnapshotUrl, setCachedSnapshotUrl } from "@/lib/redis";
 import { cloudinaryEnabled, uploadBuffer, type CloudinaryUploadResult } from "@/lib/cloudinary";
+import { serverEnv } from "@/lib/env";
 
 // Firecrawl scrape endpoint — same base as src/lib/extractors/firecrawl.ts.
 // Firecrawl's scrape API supports `formats: ["screenshot"]` which returns
@@ -29,7 +30,7 @@ function sha256(input: string): string {
  * available (no FIRECRAWL_API_KEY, no Cloudinary, or the scrape fails).
  */
 export async function screenshotUrl(url: string): Promise<string | null> {
-  const apiKey = process.env.FIRECRAWL_API_KEY;
+  const apiKey = serverEnv.firecrawl.apiKey;
   if (!apiKey || !cloudinaryEnabled()) return null;
 
   // Check Redis cache first (keyed by URL hash).

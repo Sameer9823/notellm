@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { serverEnv } from "@/lib/env";
 
 /**
  * Thin Cloudinary REST wrapper — same "raw fetch, no vendor SDK" style as
@@ -25,14 +26,24 @@ export type CloudinaryUploadResult = {
   bytes: number;
 };
 
+/** Signature payload returned to the client for direct (unsigned-proxy) uploads.
+ *  The client calls `POST https://api.cloudinary.com/v1_1/<cloud>/<type>/upload`
+ *  with these fields plus the `file` blob. */
+export type CloudinarySignature = {
+  timestamp: number;
+  signature: string;
+  apiKey: string;
+  cloudName: string;
+  folder: string;
+  resourceType: CloudinaryResourceType;
+};
+
 export function cloudinaryEnabled(): boolean {
-  return Boolean(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET);
+  return serverEnv.cloudinary.enabled;
 }
 
 function requireConfig() {
-  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-  const apiKey = process.env.CLOUDINARY_API_KEY;
-  const apiSecret = process.env.CLOUDINARY_API_SECRET;
+  const { cloudName, apiKey, apiSecret } = serverEnv.cloudinary;
   if (!cloudName || !apiKey || !apiSecret) {
     throw new Error("Cloudinary isn't configured (missing CLOUDINARY_CLOUD_NAME / API_KEY / API_SECRET)");
   }
@@ -48,6 +59,36 @@ function signParams(params: Record<string, string | number>, apiSecret: string):
     .map((k) => `${k}=${params[k]}`)
     .join("&");
   return crypto.createHash("sha1").update(sorted + apiSecret).digest("hex");
+}
+
+/**
+ * Generates a signed upload payload for client-side direct-to-Cloudinary uploads.
+ * The client posts its file (plus the returned signature/timestamp/apiKey/cloudName)
+ * directly to Cloudinary — the API secret never touches the browser.
+ */
+export function signUpload(params: {
+  folder: string;
+  resourceType?: CloudinaryResourceType;
+  publicId?: string;
+}): CloudinarySignature {
+  const { cloudName, apiKey, apiSecret } = requireConfig();
+  const timestamp = Math.floor(Date.now() / 1000);
+
+  const signParamsObj: Record<string, string | number> = {
+    folder: params.folder,
+    timestamp,
+  };
+  if (params.publicId) signParamsObj.public_id = params.publicId;
+  const signature = signParams(signParamsObj, apiSecret);
+
+  return {
+    timestamp,
+    signature,
+    apiKey,
+    cloudName,
+    folder: params.folder,
+    resourceType: params.resourceType ?? "raw",
+  };
 }
 
 /**

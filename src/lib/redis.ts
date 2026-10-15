@@ -1,15 +1,28 @@
 import Redis from "ioredis";
+import { serverEnv } from "@/lib/env";
 
 const globalForRedis = globalThis as unknown as { redis?: Redis };
 
 export const redis =
   globalForRedis.redis ??
-  new Redis(process.env.REDIS_URL as string, {
+  new Redis(serverEnv.redis.url, {
     maxRetriesPerRequest: 3,
     lazyConnect: true,
+    // Fail fast on connection errors instead of throwing async errors
+    retryStrategy: (times) => {
+      if (times > 3) return null; // Stop retrying after 3 attempts
+      return Math.min(times * 200, 2000);
+    },
+    enableOfflineQueue: false, // Don't queue commands when offline
   });
 
-if (process.env.NODE_ENV !== "production") globalForRedis.redis = redis;
+// Handle connection errors gracefully to avoid unhandled rejections
+redis.on("error", (err) => {
+  // Log but don't throw — rate limiting will fail open
+  console.warn("[redis] connection error:", err.message);
+});
+
+if (!serverEnv.isProduction) globalForRedis.redis = redis;
 
 /**
  * Redis is used as a fast, ephemeral status/progress layer so the UI can

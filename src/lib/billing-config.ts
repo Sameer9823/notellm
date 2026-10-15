@@ -1,18 +1,14 @@
+import { serverEnv } from "@/lib/env";
+
 /**
  * Single source of truth for FootNote's paid credit economics, ported from
  * sourcelm's credits-config.ts. This sits alongside the existing free-tier
- * fixed-window UserCredits system (src/lib/credits.ts): purchases/subscription
+ * fixed-window UserCredits system (src/lib/credits.ts): purchases/subscriptions
  * grants here top up the *same* UserCredits.balance via lib/billing.ts, so
  * CREDIT_COSTS in lib/credits.ts remains the one place action pricing lives.
  */
 
-function readStripePriceId(name: string): string {
-  // Unlike sourcelm, we don't throw at import time if a price id is
-  // missing — that would break `next build`/local dev for anyone who
-  // hasn't configured Stripe yet. Checkout for an unconfigured item fails
-  // loudly and specifically instead (see src/lib/billing.ts).
-  return process.env[name]?.trim() ?? "";
-}
+const prices = serverEnv.stripe.prices;
 
 /** One-time top-up packs, sold via Stripe Checkout (mode: "payment"). */
 export const CREDIT_PACKS = [
@@ -21,14 +17,14 @@ export const CREDIT_PACKS = [
     name: "Starter Pack",
     credits: 200,
     priceUsd: 5,
-    stripePriceId: readStripePriceId("STRIPE_PRICE_PACK_STARTER"),
+    stripePriceId: prices.packStarter ?? "",
   },
   {
     id: "pack_pro",
     name: "Pro Pack",
     credits: 550,
     priceUsd: 12,
-    stripePriceId: readStripePriceId("STRIPE_PRICE_PACK_PRO"),
+    stripePriceId: prices.packPro ?? "",
     badge: "Best value",
   },
   {
@@ -36,7 +32,7 @@ export const CREDIT_PACKS = [
     name: "Power Pack",
     credits: 1500,
     priceUsd: 29,
-    stripePriceId: readStripePriceId("STRIPE_PRICE_PACK_POWER"),
+    stripePriceId: prices.packPower ?? "",
   },
 ] as const;
 
@@ -47,7 +43,7 @@ export const SUBSCRIPTION_PLANS = [
     name: "Plus",
     monthlyCredits: 1000,
     priceUsd: 15,
-    stripePriceId: readStripePriceId("STRIPE_PRICE_PLAN_PLUS"),
+    stripePriceId: prices.planPlus ?? "",
     blurb: "For regular research & study sessions",
   },
   {
@@ -55,7 +51,7 @@ export const SUBSCRIPTION_PLANS = [
     name: "Pro",
     monthlyCredits: 3500,
     priceUsd: 39,
-    stripePriceId: readStripePriceId("STRIPE_PRICE_PLAN_PRO"),
+    stripePriceId: prices.planPro ?? "",
     blurb: "For heavy daily use across many notebooks",
     badge: "Most popular",
   },

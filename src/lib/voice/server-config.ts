@@ -1,16 +1,16 @@
 import { createHmac } from "node:crypto";
+import { serverEnv } from "@/lib/env";
 
-export const VOICE_TOKEN_SECRET = process.env.VOICE_TOKEN_SECRET || undefined;
+const _env = serverEnv.voice;
 
-export const VOICE_TOKEN_TTL_SECONDS = Number(process.env.VOICE_TOKEN_TTL_SECONDS ?? 600);
-
-export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || undefined;
-export const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime";
-export const OPENAI_REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || "marin";
-export const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
-
-export const VOICE_CREDIT_BLOCK_MINUTES = Number(process.env.VOICE_CREDIT_BLOCK_MINUTES ?? 5);
-export const VOICE_CREDIT_COST_PER_BLOCK = Number(process.env.VOICE_CREDIT_COST_PER_BLOCK ?? 1);
+export const VOICE_TOKEN_SECRET = _env.tokenSecret;
+export const VOICE_TOKEN_TTL_SECONDS = _env.tokenTtlSeconds;
+export const OPENAI_API_KEY = serverEnv.openai.apiKey;
+export const OPENAI_REALTIME_MODEL = serverEnv.openai.realtimeModel;
+export const OPENAI_REALTIME_VOICE = serverEnv.openai.realtimeVoice;
+export const OPENAI_BASE_URL = serverEnv.openai.baseUrl;
+export const VOICE_CREDIT_BLOCK_MINUTES = _env.creditBlockMinutes;
+export const VOICE_CREDIT_COST_PER_BLOCK = _env.creditCostPerBlock;
 
 export function signToolToken(payload: Record<string, unknown>, ttlSeconds: number = VOICE_TOKEN_TTL_SECONDS): string {
   if (!VOICE_TOKEN_SECRET) throw new Error("VOICE_TOKEN_SECRET is not configured");

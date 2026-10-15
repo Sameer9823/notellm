@@ -8,6 +8,7 @@ import {
   type VoiceAgentEvent,
   type VoiceSession,
 } from "samai-sdk/voice";
+import { clientEnv } from "@/lib/env";
 import { createVoiceAgent, turnDetection } from "@/lib/voice/agent";
 import { VOICE_TOOLS } from "@/lib/voice/tools/client";
 import { detectCapabilities, toVoiceError } from "@/lib/voice/helpers";
@@ -22,9 +23,7 @@ const IDLE_TIMEOUT_MS = 60_000;
 const IDLE_WARNING_MS = 45_000;
 
 function maxDurationMs(): number | null {
-  const raw = typeof window !== "undefined" ? (process.env.NEXT_PUBLIC_MAX_SESSION_MINUTES ?? null) : null;
-  if (!raw) return 10 * 60_000;
-  const minutes = Number(raw);
+  const minutes = clientEnv.maxSessionMinutes;
   return Number.isFinite(minutes) && minutes > 0 ? minutes * 60_000 : null;
 }
 
@@ -689,7 +688,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
       clearBlockTimer();
       blockTimerRef.current = setInterval(() => {
         void renewBlock();
-      }, (Number(process.env.NEXT_PUBLIC_VOICE_CREDIT_BLOCK_MINUTES ?? 5)) * 60 * 1000);
+      }, clientEnv.voiceCreditBlockMinutes * 60 * 1000);
     }
   }, [attemptStart, beginLimits, cancelReconnect, clearBlockTimer, connect, renewBlock]);
 

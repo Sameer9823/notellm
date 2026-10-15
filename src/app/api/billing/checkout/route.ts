@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { createCheckoutSession } from "@/lib/billing";
+import { clientEnv } from "@/lib/env";
 import { z } from "zod";
 
 const bodySchema = z.object({
@@ -20,7 +21,7 @@ export async function POST(req: NextRequest) {
   const email = user?.primaryEmailAddress?.emailAddress ?? "";
   const name = [user?.firstName, user?.lastName].filter(Boolean).join(" ") || email || userId;
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
+  const appUrl = clientEnv.appUrl;
 
   try {
     const session = await createCheckoutSession({

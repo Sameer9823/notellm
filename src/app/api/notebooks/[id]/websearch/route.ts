@@ -27,6 +27,8 @@ const addSchema = z.object({
  * Nothing is persisted yet — the client shows these as checkable results
  * and calls PUT below with the ones the user actually picked.
  */
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
