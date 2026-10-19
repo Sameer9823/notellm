@@ -258,12 +258,14 @@ export function MessageBubble({
     setPinned(true);
   }
 
+  const contentLength = message.content?.length ?? 0;
+
   const showActions =
-    !isUser && !message.streaming && message.content.length > 0;
+    !isUser && !message.streaming && contentLength > 0;
   const isThinking =
-    !isUser && message.streaming && message.content.length === 0;
+    !isUser && message.streaming && contentLength === 0;
   const isStreaming =
-    !isUser && message.streaming && message.content.length > 0;
+    !isUser && message.streaming && contentLength > 0;
 
   return (
     <motion.div

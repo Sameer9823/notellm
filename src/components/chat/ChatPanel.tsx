@@ -183,13 +183,16 @@ export const ChatPanel = forwardRef<
               m.id === assistantId
                 ? {
                     ...m,
-                    content: data.answer,
+                    content: data.answer ?? data.error ?? "Something went wrong answering that — try again.",
                     citations: data.citations ?? [],
                     streaming: false,
                   }
                 : m,
             ),
           );
+          if (data.error) {
+            toast.error(data.error);
+          }
           return;
         }
 

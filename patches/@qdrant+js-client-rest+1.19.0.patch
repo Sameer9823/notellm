@@ -1,0 +1,50 @@
+diff --git a/node_modules/@qdrant/js-client-rest/dist/esm/dispatcher.js b/node_modules/@qdrant/js-client-rest/dist/esm/dispatcher.js
+--- a/node_modules/@qdrant/js-client-rest/dist/esm/dispatcher.js
++++ b/node_modules/@qdrant/js-client-rest/dist/esm/dispatcher.js
+@@ -1,15 +1,5 @@
+ /* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
+-import { Agent } from 'undici';
+-export const createDispatcher = (connections = 25) => 
+-// eslint-disable-next-line @typescript-eslint/no-unsafe-return
+-new Agent({
+-    // timeouts are handled by AbortSignal in our middleware
+-    bodyTimeout: 0,
+-    headersTimeout: 0,
+-    // https://stackoverflow.com/a/36437932/558180
+-    // pipelining: 1,
+-    // a sensible max connections value
+-    connections,
+-    // will be overriden by header Keep-Alive, just as sensible default
+-    keepAliveTimeout: 10_000,
+-});
++// Return undefined so the global fetch uses its default built-in dispatcher
++// (Node's internal undici) instead of a custom undici Agent that may be
++// version-incompatible with the one Node's fetch expects.
++export const createDispatcher = (_connections = 25) => undefined;
+diff --git a/node_modules/@qdrant/js-client-rest/dist/cjs/dispatcher.js b/node_modules/@qdrant/js-client-rest/dist/cjs/dispatcher.js
+--- a/node_modules/@qdrant/js-client-rest/dist/cjs/dispatcher.js
++++ b/node_modules/@qdrant/js-client-rest/dist/cjs/dispatcher.js
+@@ -1,19 +1,9 @@
+ "use strict";
+ /* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
+ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.createDispatcher = void 0;
+-const undici_1 = require("undici");
+-const createDispatcher = (connections = 25) => 
+-// eslint-disable-next-line @typescript-eslint/no-unsafe-return
+-new undici_1.Agent({
+-    // timeouts are handled by AbortSignal in our middleware
+-    bodyTimeout: 0,
+-    headersTimeout: 0,
+-    // https://stackoverflow.com/a/36437932/558180
+-    // pipelining: 1,
+-    // a sensible max connections value
+-    connections,
+-    // will be overriden by header Keep-Alive, just as sensible default
+-    keepAliveTimeout: 10_000,
+-});
++// Return undefined so the global fetch uses its default built-in dispatcher
++// (Node's internal undici) instead of a custom undici Agent that may be
++// version-incompatible with the one Node's fetch expects.
++const createDispatcher = (_connections = 25) => undefined;
+ exports.createDispatcher = createDispatcher;
