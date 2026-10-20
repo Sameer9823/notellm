@@ -25,10 +25,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ nam
   const verified = verifyToolToken(toolToken);
   if (!verified) return toolRefused(401, "Invalid or expired tool token");
 
-  const { userId: tokenUserId, notebookId, sessionId } = verified.payload as {
+  const { userId: tokenUserId, notebookId, sessionId, sourceId } = verified.payload as {
     userId: string;
     notebookId: string;
     sessionId: string;
+    sourceId?: string | null;
     exp: number;
   };
 
@@ -56,10 +57,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ nam
   }
 
   try {
-    const tool = createToolByName(name, notebookId);
+    const tool = createToolByName(name, notebookId, sourceId);
     if (!tool) return toolRefused(404, `Tool "${name}" is not registered on the server.`);
     const result = await tool.execute(parsed.data);
-    console.log(`[voice/tools/${name}] notebookId=${notebookId} resultLen=${String(result).length}`);
+    console.log(`[voice/tools/${name}] notebookId=${notebookId} sourceId=${String(sourceId)} resultLen=${String(result).length}`);
     return NextResponse.json({ ok: true, result, sessionId });
   } catch (err) {
     console.error(`[voice/tools/${name}] threw:`, err);

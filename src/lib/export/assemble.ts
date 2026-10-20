@@ -73,9 +73,9 @@ export async function buildExportDocument(
           where: { notebookId },
           take: MAX_MESSAGES,
           orderBy: { createdAt: "asc" },
-          select: { id: true, role: true, content: true, citations: true, createdAt: true },
+          select: { id: true, role: true, content: true, citations: true, sourceId: true, createdAt: true },
         })
-      : Promise.resolve([] as { id: string; role: "USER" | "ASSISTANT"; content: string; citations: unknown; createdAt: Date }[]),
+      : Promise.resolve([] as { id: string; role: "USER" | "ASSISTANT"; content: string; citations: unknown; sourceId: string | null; createdAt: Date }[]),
     opts.sections.includes("flashcards")
       ? db.reviewCard.findMany({
           where: { notebookId },
@@ -241,27 +241,55 @@ export async function buildExportDocument(
     sections.push({ key: "audio", title: "Audio overview script", blocks });
   }
 
+  const sourceTitleById = new Map(sources.map((s) => [s.id, s.title]));
+  const titleForSource = (sid: string): string =>
+    sourceTitleById.get(sid) ??
+    (messages.find((m) => m.sourceId === sid && m.citations) as
+      | { citations: { sourceTitle?: string }[] | null }
+      | undefined
+    )?.citations?.[0]?.sourceTitle ??
+    "Unknown source";
+
   if (opts.includeChat && messages.length > 0) {
-    const blocks: ExportDocument["sections"][0]["blocks"] = [];
+    // Group chat turns by scope: sourceId === null is the notebook-wide
+    // "All sources" chat; every other sourceId is that source's own thread.
+    const groups = new Map<string | null, typeof messages>();
+    const order: Array<string | null> = [];
     for (const m of messages) {
-      const role = m.role === "USER" ? "You" : "Assistant";
-      blocks.push({ type: "heading" as const, level: 3, inline: [{ type: "text" as const, text: role }] });
-      const sec = markdownToSection(normalizeContent(m.content), `msg-${m.id}`, "");
-      if (sec) blocks.push(...sec.blocks);
-      if (opts.includeCitations && m.citations && Array.isArray(m.citations) && m.citations.length > 0) {
-        blocks.push({ type: "paragraph" as const, inline: [{ type: "text" as const, text: "Sources:", bold: true }] });
-        const listItems = m.citations.map((c: unknown) => {
-          const cit = c as { sourceTitle: string; sourceType: string; page?: number | null; startSec?: number | null };
-          const refId = getRefId(cit);
-          return {
-            inline: [{ type: "footnote-ref" as const, id: refId }, { type: "text" as const, text: ` ${cit.sourceTitle} (${cit.sourceType})${cit.page != null ? ` p. ${cit.page}` : cit.startSec != null ? ` ${formatTimestamp(cit.startSec)}` : ""}` }],
-            children: [],
-          };
-        });
-        blocks.push({ type: "list" as const, ordered: false, items: listItems });
+      if (!groups.has(m.sourceId)) {
+        groups.set(m.sourceId, []);
+        order.push(m.sourceId);
       }
+      groups.get(m.sourceId)!.push(m);
     }
-    sections.push({ key: "chat", title: "Chat history", blocks });
+
+    for (const sid of order) {
+      const scopeMessages = groups.get(sid)!;
+      if (!scopeMessages.length) continue;
+      const scopeTitle = sid === null
+        ? "All sources"
+        : titleForSource(sid);
+      const blocks: ExportDocument["sections"][0]["blocks"] = [];
+      for (const m of scopeMessages) {
+        const role = m.role === "USER" ? "You" : "Assistant";
+        blocks.push({ type: "heading" as const, level: 3, inline: [{ type: "text" as const, text: role }] });
+        const sec = markdownToSection(normalizeContent(m.content), `msg-${m.id}`, "");
+        if (sec) blocks.push(...sec.blocks);
+        if (opts.includeCitations && m.citations && Array.isArray(m.citations) && m.citations.length > 0) {
+          blocks.push({ type: "paragraph" as const, inline: [{ type: "text" as const, text: "Sources:", bold: true }] });
+          const listItems = m.citations.map((c: unknown) => {
+            const cit = c as { sourceTitle: string; sourceType: string; page?: number | null; startSec?: number | null };
+            const refId = getRefId(cit);
+            return {
+              inline: [{ type: "footnote-ref" as const, id: refId }, { type: "text" as const, text: ` ${cit.sourceTitle} (${cit.sourceType})${cit.page != null ? ` p. ${cit.page}` : cit.startSec != null ? ` ${formatTimestamp(cit.startSec)}` : ""}` }],
+              children: [],
+            };
+          });
+          blocks.push({ type: "list" as const, ordered: false, items: listItems });
+        }
+      }
+      sections.push({ key: sid === null ? "chat-all" : `chat-${sid}`, title: `Chat: ${scopeTitle}`, blocks });
+    }
   }
 
   if (opts.includeMemory && memories.length > 0) {

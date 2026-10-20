@@ -283,9 +283,10 @@ model Source {
   updatedAt     DateTime     @updatedAt
   indexedAt     DateTime?
 
-  chunks        Chunk[]
+   chunks        Chunk[]
+   messages      Message[]
 
-  sourceFile    SourceFile?
+   sourceFile    SourceFile?
 
   @@index([notebookId])
   @@index([status])
@@ -339,14 +340,20 @@ model Message {
   notebookId String
   notebook   Notebook    @relation(fields: [notebookId], references: [id], onDelete: Cascade)
 
-  role       MessageRole
-  content    String      @db.Text
-  citations  Json?       // array of { chunkId, sourceId, sourceTitle, page?, startSec?, endSec?, snippet }
-  channel    MessageChannel @default(TEXT)
+   role       MessageRole
+   content    String      @db.Text
+   citations  Json?       // array of { chunkId, sourceId, sourceTitle, page?, startSec?, endSec?, snippet }
+   channel    MessageChannel @default(TEXT)
 
-  createdAt  DateTime @default(now())
+   // NULL = the notebook's "All sources" chat; set to a source id when this
+   // turn belongs to that source's own independent chat thread.
+   sourceId   String?
+   source     Source?    @relation(fields: [sourceId], references: [id], onDelete: Cascade)
 
-  @@index([notebookId, createdAt])
+   createdAt  DateTime @default(now())
+
+   @@index([notebookId, sourceId, createdAt])
+   @@index([notebookId, createdAt])
 }
 // ---------------------------------------------------------------------------
 // Study artifacts (ported from sourcelm's LearningArtifact)

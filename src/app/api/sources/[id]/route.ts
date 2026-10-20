@@ -61,15 +61,14 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     });
   }
 
-  // Once a notebook has no sources left, its chat history, notes, roadmap,
-  // and podcast (audio overview) are all now referring to content that no
-  // longer exists — clear them out too instead of leaving stale artifacts
-  // behind. This only fires when the *last* source is removed; deleting
-  // one source out of several leaves everything else untouched.
+  // Deleting a source cascades (via the Message.sourceId relation) that
+  // source's own scoped chat messages — but MUST NOT touch any other
+  // messages (including the notebook's "All sources" chat at sourceId=null).
+  // The relation cascade above handles scoped messages; we deliberately omit
+  // the old notebook-wide message wipe, which previously deleted every chat.
   const remaining = await db.source.count({ where: { notebookId: source.notebookId } });
   if (remaining === 0) {
     await Promise.all([
-      db.message.deleteMany({ where: { notebookId: source.notebookId } }),
       db.note.deleteMany({ where: { notebookId: source.notebookId } }),
       db.roadmap.deleteMany({ where: { notebookId: source.notebookId } }),
       db.audioOverview.deleteMany({ where: { notebookId: source.notebookId } }),

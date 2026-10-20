@@ -1,6 +1,7 @@
 import { embedQuery, openai, CHAT_MODEL, generateHydePassage } from "@/lib/openai";
 import { searchNotebook, type ChunkPayload } from "@/lib/qdrant";
 import { tavilySearch } from "@/lib/tavily";
+import { formatTimestamp } from "@/lib/source-meta";
 import { describeError } from "@/lib/utils";
 
 export type RetrievedChunk = ChunkPayload & { score: number; url?: string };
@@ -12,6 +13,13 @@ const SIMILARITY_FLOOR = 0.15; // below this, a chunk is noise, not context
 // recovering chunks a direct-question embedding would have missed.
 const HYDE_SIMILARITY_FLOOR = 0.12;
 
+// For the "All sources" chat, balance retrieval so one large source can't
+// dominate: take up to this many top passages per source (above the noise
+// floor), capped at this total. Every passage keeps its sourceTitle so the
+// model can attribute claims and the citation chips can name the source.
+const PER_SOURCE_CAP = 2;
+const ALL_SOURCES_TOTAL_CAP = 12;
+
 export async function retrieve(
   notebookId: string,
   question: string,
@@ -20,10 +28,29 @@ export async function retrieve(
 ): Promise<RetrievedChunk[]> {
   try {
     const vector = await embedQuery(question);
-    const hits = await searchNotebook(notebookId, vector, k, sourceId);
-    return hits
-      .filter((h) => h.score >= SIMILARITY_FLOOR)
-      .map((h) => ({ ...h.payload, score: h.score }));
+    // Scoped chat (sourceId set): filter strictly to that one source.
+    if (sourceId) {
+      const hits = await searchNotebook(notebookId, vector, k, sourceId);
+      return hits
+        .filter((h) => h.score >= SIMILARITY_FLOOR)
+        .map((h) => ({ ...h.payload, score: h.score }));
+    }
+    // All-sources chat: notebook-wide top hits, then balanced 1-2 per source
+    // so a single large source doesn't crowd out the others.
+    const wide = await searchNotebook(notebookId, vector, ALL_SOURCES_TOTAL_CAP * PER_SOURCE_CAP, null);
+    const filtered = wide.filter((h) => h.score >= SIMILARITY_FLOOR);
+    const seen = new Map<string, number>();
+    const balanced: RetrievedChunk[] = [];
+    for (const h of filtered) {
+      if (balanced.length >= ALL_SOURCES_TOTAL_CAP) break;
+      const chunk = { ...(h.payload as ChunkPayload), score: h.score };
+      const count = seen.get(chunk.sourceId) ?? 0;
+      if (count < PER_SOURCE_CAP) {
+        seen.set(chunk.sourceId, count + 1);
+        balanced.push(chunk);
+      }
+    }
+    return balanced;
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("[rag] retrieve failed:", describeError(err));
@@ -76,10 +103,10 @@ export async function retrieveWeb(question: string, limit = 4): Promise<Retrieve
 
 export function buildContext(chunks: RetrievedChunk[]) {
   return chunks
-    .map(
-      (c, i) =>
-        `<source id="${i + 1}" source="${escapeAttr(c.sourceTitle)}" type="${c.sourceType}">\n${c.content}\n</source>`
-    )
+    .map((c, i) => {
+      const loc = c.page != null ? `p.${c.page}` : c.startSec != null ? formatTimestamp(c.startSec) : "";
+      return `<source id="${i + 1}" source="${escapeAttr(c.sourceTitle)}" type="${c.sourceType}"${loc ? ` loc="${escapeAttr(loc)}"` : ""}>\n${c.content}\n</source>`;
+    })
     .join("\n\n");
 }
 
@@ -115,7 +142,8 @@ export async function streamAnswer(
   history: { role: "user" | "assistant"; content: string }[],
   sourceId?: string | null,
   memoryContext?: string,
-  webSearchEnabled = false
+  webSearchEnabled = false,
+  scopeSourceTitle?: string
 ) {
   // Ported from sourcelm's Mem0-backed memory feature: durable facts about
   // the user (see src/lib/memory.ts) are appended as extra context so the
@@ -124,6 +152,19 @@ export async function streamAnswer(
   const memoryBlock = memoryContext?.trim()
     ? `\n\nWhat you know about this user from past conversations (for tone/context only — never cite these as sources):\n${memoryContext}`
     : "";
+
+  // Scoped (single-source) chat: the system prompt is tightened so the model
+  // never pulls in other sources, and the scoped out-of-source prompt tells
+  // the user to switch to "All sources" instead of falling back to general
+  // knowledge.
+  const scoped = Boolean(sourceId);
+  const scopedSystemPrompt = scoped
+    ? ` You are answering ONLY from the single source titled "${scopeSourceTitle ?? sourceId}". If the provided passages do not contain enough information to answer, say so plainly — do not guess or use outside knowledge — and suggest the user switch to the "All sources" chat for a broader answer.`
+    : ` You are answering from several notebook sources at once. For each factual claim, name which source it came from (e.g. "from <source title>"). When sources agree, say so; when they conflict, flag the contradiction and cite both sides. If a question is only covered by some sources, state which sources are relevant and which do not cover the topic.`;
+  const scopedOutOfSourcePrompt = scoped
+    ? `\n⚠️ This source doesn't seem to cover that. Switch to "All sources" for a broader answer.`
+    : "";
+
   let chunks = await retrieve(notebookId, question, 8, sourceId);
   let usedHyde = false;
 
@@ -156,11 +197,11 @@ export async function streamAnswer(
     // useful response, with an unambiguous "not in your sources" flag.
     const stream = await openai.chat.completions.create({
       model: CHAT_MODEL,
-      messages: [
-        { role: "system" as const, content: OUT_OF_SOURCE_SYSTEM_PROMPT + memoryBlock },
-        ...history.slice(-6),
-        { role: "user" as const, content: question },
-      ],
+       messages: [
+         { role: "system" as const, content: (scoped ? OUT_OF_SOURCE_SYSTEM_PROMPT + scopedOutOfSourcePrompt : OUT_OF_SOURCE_SYSTEM_PROMPT) + memoryBlock },
+         ...history.slice(-6),
+         { role: "user" as const, content: question },
+       ],
        stream: true,
        temperature: 0.4,
        max_tokens: 256,
@@ -170,7 +211,7 @@ export async function streamAnswer(
 
   const context = buildContext(chunks);
   const messages = [
-    { role: "system" as const, content: SYSTEM_PROMPT + memoryBlock },
+    { role: "system" as const, content: SYSTEM_PROMPT + scopedSystemPrompt + memoryBlock },
     ...history.slice(-6),
     {
       role: "user" as const,

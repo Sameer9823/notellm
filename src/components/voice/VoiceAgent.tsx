@@ -7,7 +7,7 @@ import { VoiceControls } from "./VoiceControls";
 import { VoiceTranscript } from "./VoiceTranscript";
 import { useVoiceSession, type UseVoiceSessionResult } from "@/hooks/use-voice-session";
 
-export function VoiceAgentScreen({ notebookId, onClose }: { notebookId: string; onClose: () => void }) {
+export function VoiceAgentScreen({ notebookId, scopeSourceId, onClose }: { notebookId: string; scopeSourceId?: string | null; onClose: () => void }) {
   const session = useVoiceSession();
   const [starting, setStarting] = useState(false);
   const [language, setLanguage] = useState("en");
@@ -15,11 +15,11 @@ export function VoiceAgentScreen({ notebookId, onClose }: { notebookId: string; 
   const handleStart = useCallback(async () => {
     setStarting(true);
     try {
-      await session.start(notebookId, language);
+      await session.start(notebookId, language, scopeSourceId);
     } finally {
       setStarting(false);
     }
-  }, [notebookId, session, language]);
+  }, [notebookId, session, language, scopeSourceId]);
 
   const handleOpenCitation = useCallback((citation: {
     marker: number;

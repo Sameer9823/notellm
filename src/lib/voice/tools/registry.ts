@@ -12,7 +12,7 @@ const searchSchema = z.object({
 /** Maximum number of citations to surface to the user from a single tool call. */
 const MAX_CITATIONS = 4;
 
-export function createSearchNotebookTool(notebookId: string): ServerTool<typeof searchSchema> {
+export function createSearchNotebookTool(notebookId: string, sourceId?: string | null): ServerTool<typeof searchSchema> {
   return {
     name: "search_notebook",
     description:
@@ -20,7 +20,7 @@ export function createSearchNotebookTool(notebookId: string): ServerTool<typeof 
     parameters: searchSchema,
     sideEffects: false,
     async execute({ query }) {
-      const results = await searchNotebookImpl(notebookId, query);
+      const results = await searchNotebookImpl(notebookId, query, sourceId);
       if (!results.length) {
         return JSON.stringify({ results: [], note: "no relevant passages" });
       }
@@ -68,10 +68,13 @@ function withRefs(results: Array<{ marker?: number } & Record<string, unknown>>)
 
 async function searchNotebookImpl(
   notebookId: string,
-  query: string
+  query: string,
+  sourceId?: string | null
 ): Promise<Array<{ sourceTitle: string; text: string; locationLabel: string; url?: string; chunkId: string; sourceId: string; sourceType: string; page?: number; startSec?: number; startChar?: number; score?: number }>> {
   const vector = await embedQuery(query);
-  const hits = await searchNotebook(notebookId, vector, 8);
+  // A non-null sourceId scopes the search to a single source (the voice chat
+  // is scoped to one source). null/undefined searches the whole notebook.
+  const hits = await searchNotebook(notebookId, vector, 8, sourceId ?? null);
   const floor = 0.15;
   const seen = new Set<string>();
   const results: Array<{ sourceTitle: string; text: string; locationLabel: string; url?: string; chunkId: string; sourceId: string; sourceType: string; page?: number; startSec?: number; startChar?: number; score?: number }> = [];
@@ -143,8 +146,8 @@ export function getAvailableTools(): ToolName[] {
   return tavilyEnabled() ? [...TOOLS] : ["search_notebook"];
 }
 
-export function createToolByName(name: string, notebookId: string): ServerTool | null {
-  if (name === "search_notebook") return createSearchNotebookTool(notebookId);
+export function createToolByName(name: string, notebookId: string, sourceId?: string | null): ServerTool | null {
+  if (name === "search_notebook") return createSearchNotebookTool(notebookId, sourceId);
   if (name === "search_web") return createSearchWebTool();
   return null;
 }

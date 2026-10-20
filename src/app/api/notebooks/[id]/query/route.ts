@@ -57,16 +57,32 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { question, webSearch } = parsed.data;
   let sourceId = parsed.data.sourceId ?? null;
 
+  // Strict scope validation: a provided sourceId must belong to this notebook
+  // and be READY. Never silently fall back to null — that would save the
+  // message into the wrong (all-sources) chat.
+  let scopeSourceTitle: string | null = null;
   if (sourceId) {
-    const scoped = await db.source.findUnique({ where: { id: sourceId }, select: { notebookId: true } });
-    if (!scoped || scoped.notebookId !== notebookId) sourceId = null;
+    const scoped = await db.source.findUnique({
+      where: { id: sourceId },
+      select: { notebookId: true, status: true, title: true },
+    });
+    if (!scoped || scoped.notebookId !== notebookId) {
+      return NextResponse.json({ error: "Source not found" }, { status: 404 });
+    }
+    if (scoped.status !== "READY") {
+      return NextResponse.json(
+        { error: `This source is "${scoped.status}" and not ready to answer from yet. Wait for it to finish indexing.` },
+        { status: 409 },
+      );
+    }
+    scopeSourceTitle = scoped.title;
   }
 
   const spend = await consumeCredits(userId, CREDIT_COSTS.chat);
   if (!spend.allowed) return creditsExhaustedResponse(spend.status);
 
   const priorMessages = await db.message.findMany({
-    where: { notebookId },
+    where: { notebookId, sourceId },
     orderBy: { createdAt: "desc" },
     take: 20,
   });
@@ -77,7 +93,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       content: m.content,
     }));
 
-  await db.message.create({ data: { notebookId, role: "USER", content: question } });
+  await db.message.create({ data: { notebookId, role: "USER", content: question, sourceId } });
 
   const creditsHeaders = {
     "X-Credits-Balance": String(spend.status.balance),
@@ -92,7 +108,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   let retrieval: Awaited<ReturnType<typeof streamAnswer>>;
   try {
-    retrieval = await streamAnswer(notebookId, question, history, sourceId, memoryContext, webSearch);
+    retrieval = await streamAnswer(notebookId, question, history, sourceId, memoryContext, webSearch, scopeSourceTitle ?? undefined);
   } catch (err) {
     void refundCredits(userId, CREDIT_COSTS.chat);
     logError("query/streamAnswer", err);
@@ -120,7 +136,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           }
           const citations = extractCitations(full, chunks);
           await db.message.create({
-            data: { notebookId, role: "ASSISTANT", content: full, citations },
+            data: { notebookId, role: "ASSISTANT", content: full, citations, sourceId },
           });
           controller.enqueue(encoder.encode(CITATIONS_MARKER + JSON.stringify(citations)));
           controller.close();
@@ -138,7 +154,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             ? `${full.trim()}\n\n[Response was interrupted before completion.]`
             : "The response was interrupted before completion.";
           await db.message.create({
-            data: { notebookId, role: "ASSISTANT", content: message, citations: [] },
+            data: { notebookId, role: "ASSISTANT", content: message, citations: [], sourceId },
           });
           controller.enqueue(encoder.encode(CITATIONS_MARKER + JSON.stringify([])));
           controller.error(new Error("Stream interrupted"));

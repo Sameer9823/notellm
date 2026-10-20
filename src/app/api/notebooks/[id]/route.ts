@@ -18,7 +18,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     where: { id },
     include: {
       sources: { orderBy: { createdAt: "asc" } },
-      messages: { orderBy: { createdAt: "asc" } },
+      messages: { orderBy: { createdAt: "asc" }, select: { id: true, role: true, content: true, citations: true, sourceId: true, createdAt: true } },
     },
   });
 

@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   useCallback,
+  useMemo,
   forwardRef,
   useImperativeHandle,
 } from "react";
@@ -16,12 +17,16 @@ import {
   ArrowDown,
   Maximize2,
   Minimize2,
+  Ellipsis,
+  Trash2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
 import { VoiceAgentScreen } from "@/components/voice/VoiceAgent";
 import { cn } from "@/lib/utils";
 import { ExportMenu } from "@/components/shared/ExportMenu";
@@ -31,6 +36,7 @@ import {
   downloadMarkdown,
   printAsPdf,
 } from "@/lib/export";
+import { useScopeMessages } from "@/hooks/use-scope-messages";
 import { toast } from "sonner";
 import type { Citation, MessageDTO, SourceDTO } from "@/types";
 
@@ -44,15 +50,16 @@ export type ChatPanelHandle = {
 export const ChatPanel = forwardRef<
   ChatPanelHandle,
   {
-    notebookId: string;
-    notebookTitle?: string;
-    initialMessages: MessageDTO[];
-    sources: SourceDTO[];
-    scopeSourceId?: string | null;
-    scopeSourceTitle?: string | null;
-    onOpenCitation: (c: Citation) => void;
-    onPin?: (message: MessageDTO) => void;
-    focusMode?: boolean;
+     notebookId: string;
+     notebookTitle?: string;
+     initialMessages?: MessageDTO[];
+     sources: SourceDTO[];
+     scopeSourceId?: string | null;
+     scopeSourceTitle?: string | null;
+     onOpenCitation: (c: Citation) => void;
+     onPin?: (message: MessageDTO) => void;
+     onMessagesChange?: (count: number) => void;
+     focusMode?: boolean;
     /** Called with the raw response Headers whenever a query response comes
      *  back, so the credits badge can update from the X-Credits-* headers
      *  without a separate /api/credits round trip. */
@@ -67,19 +74,29 @@ export const ChatPanel = forwardRef<
     scopeSourceId = null,
     scopeSourceTitle = null,
     onOpenCitation,
-    onPin,
+     onPin,
+    onMessagesChange,
     focusMode = false,
     onCreditsHeaders,
   },
   ref,
-) {
-  const [messages, setMessages] =
-    useState<(MessageDTO & { streaming?: boolean })[]>(initialMessages);
+ ) {
+  const knownSourceIds = useMemo(() => new Set(sources.map((s) => s.id)), [sources]);
+  const {
+    messages,
+    setMessages,
+    loading: messagesLoading,
+    clearChat,
+  } = useScopeMessages(notebookId, scopeSourceId ?? null, initialMessages);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [textareaHeight, setTextareaHeight] = useState(52);
+
+  useEffect(() => {
+    onMessagesChange?.(messages.length);
+  }, [messages.length, onMessagesChange]);
 
   useEffect(() => {
     if (!voiceOpen) return;
@@ -265,6 +282,7 @@ export const ChatPanel = forwardRef<
       id: `local-${Date.now()}`,
       role: "USER",
       content: question,
+      sourceId: scopeRef.current ?? null,
       createdAt: new Date().toISOString(),
     };
     const assistantId = `local-${Date.now() + 1}`;
@@ -276,6 +294,7 @@ export const ChatPanel = forwardRef<
         role: "ASSISTANT",
         content: "",
         citations: [],
+        sourceId: scopeRef.current ?? null,
         createdAt: new Date().toISOString(),
         streaming: true,
       },
@@ -365,6 +384,30 @@ export const ChatPanel = forwardRef<
               )
             }
           />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-1.5 text-muted-foreground opacity-60 hover:opacity-100"
+                title="More"
+              >
+                <Ellipsis className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                className="text-destructive"
+                disabled={messages.length === 0}
+                onSelect={(e) => {
+                  e.preventDefault();
+                  clearChat();
+                }}
+              >
+                Clear this chat
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             variant="ghost"
             size="icon"
@@ -431,6 +474,7 @@ export const ChatPanel = forwardRef<
                   m.id === lastAssistantId ? regenerateLast : undefined
                 }
                 onPin={onPin}
+                knownSourceIds={knownSourceIds}
               />
             ))
           )}
@@ -460,6 +504,7 @@ export const ChatPanel = forwardRef<
         {voiceOpen ? (
           <VoiceAgentScreen
             notebookId={notebookId}
+            scopeSourceId={scopeSourceId}
             onClose={() => setVoiceOpen(false)}
           />
         ) : (

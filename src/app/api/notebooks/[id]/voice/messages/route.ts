@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 const saveSchema = z.object({
   role: z.enum(["USER", "ASSISTANT"]),
   content: z.string().min(1).max(5000),
+  sourceId: z.string().nullable().optional(),
   citations: z.array(
     z.object({
       marker: z.number(),
@@ -40,6 +41,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const parsed = saveSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
 
+  // A provided sourceId must belong to this notebook (ownership is enforced
+  // by the notebook check above; here we just scope-validate the reference).
+  if (parsed.data.sourceId) {
+    const source = await db.source.findUnique({ where: { id: parsed.data.sourceId }, select: { notebookId: true } });
+    if (!source || source.notebookId !== notebookId) {
+      return NextResponse.json({ error: "Source not found" }, { status: 404 });
+    }
+  }
+
   const message = await db.message.create({
     data: {
       notebookId,
@@ -47,6 +57,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       content: parsed.data.content,
       citations: parsed.data.citations ? JSON.parse(JSON.stringify(parsed.data.citations)) : null,
       channel: "VOICE",
+      sourceId: parsed.data.sourceId ?? null,
     },
   });
 

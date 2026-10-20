@@ -207,12 +207,16 @@ export function MessageBubble({
   onRegenerate,
   onPin,
   isLast,
+  knownSourceIds,
 }: {
   message: MessageDTO & { streaming?: boolean };
   onOpenCitation: (c: Citation) => void;
   onRegenerate?: () => void;
   onPin?: (message: MessageDTO) => void;
   isLast?: boolean;
+  /** Set of source ids that currently exist in the notebook; citations whose
+   *  sourceId is outside this set are rendered as "Source removed". */
+  knownSourceIds?: Set<string>;
 }) {
   const isUser = message.role === "USER";
   const [copied, setCopied] = useState(false);
@@ -352,13 +356,21 @@ export function MessageBubble({
           message.citations &&
           message.citations.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
-              {message.citations.map((c) => (
+              {message.citations.map((c) => {
+              const isRemoved =
+                !!c.sourceId &&
+                !c.sourceId.startsWith("web:") &&
+                knownSourceIds &&
+                !knownSourceIds.has(c.sourceId);
+              return (
                 <CitationChip
                   key={`${c.chunkId}-${c.marker}`}
                   citation={c}
                   onOpen={onOpenCitation}
+                  sourceRemoved={isRemoved}
                 />
-              ))}
+              );
+            })}
             </div>
           )}
 

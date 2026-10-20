@@ -7,9 +7,12 @@ import type { Citation } from "@/types";
 export function CitationChip({
   citation,
   onOpen,
+  sourceRemoved = false,
 }: {
   citation: Citation;
   onOpen: (c: Citation) => void;
+  /** The source this citation points to no longer exists in the notebook. */
+  sourceRemoved?: boolean;
 }) {
   const Icon = sourceTypeIcon[citation.sourceType];
   const locator =
@@ -23,8 +26,10 @@ export function CitationChip({
     <div className="inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary/50 px-2 py-1 text-left text-[11px]" data-testid="citation-chip">
       <button
         data-testid="open-citation"
-        onClick={() => onOpen(citation)}
-        className="flex flex-1 items-center gap-1.5 text-left transition-colors hover:text-foreground"
+        onClick={() => (sourceRemoved ? undefined : onOpen(citation))}
+        disabled={sourceRemoved}
+        className="flex flex-1 items-center gap-1.5 text-left transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        title={sourceRemoved ? "This source was removed from the notebook" : "Open cited passage"}
       >
         <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary/20 font-mono text-[10px] font-semibold text-primary">
           {citation.marker}
@@ -38,9 +43,12 @@ export function CitationChip({
             {locator}
           </span>
         )}
+        {sourceRemoved && (
+          <span className="shrink-0 font-mono text-[10px] text-orange-500/80">(removed)</span>
+        )}
       </button>
 
-      {citation.url && (
+      {!sourceRemoved && citation.url && (
         <a
           href={citation.url}
           target="_blank"

@@ -59,7 +59,7 @@ export interface UseVoiceSessionResult {
   setPushToTalk(enabled: boolean): void;
   setTalking(talking: boolean): void;
   sendText(text: string): boolean;
-  start(notebookId: string, language?: string): Promise<void>;
+  start(notebookId: string, language?: string, sourceId?: string | null): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -316,7 +316,8 @@ export function useVoiceSession(): UseVoiceSessionResult {
               body: JSON.stringify({
                 role: "USER",
                 content: userTextRef.current.trim(),
-                sessionId: sessionInfoRef.current.sessionId,
+                sourceId: currentSourceIdRef.current ?? null,
+                sessionId: sessionInfoRef.current?.sessionId,
               }),
             }).catch(() => {});
           }
@@ -347,7 +348,8 @@ export function useVoiceSession(): UseVoiceSessionResult {
                 role: "ASSISTANT",
                 content: assistantTextRef.current.trim(),
                 citations: assistantCitationsRef.current ?? null,
-                sessionId: sessionInfoRef.current.sessionId,
+                sourceId: currentSourceIdRef.current ?? null,
+                sessionId: sessionInfoRef.current?.sessionId,
               }),
             }).catch(() => {});
           }
@@ -483,7 +485,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
       const res = await fetch(`/api/notebooks/${currentNotebookIdRef.current}/voice/session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh: true, language: currentLanguageRef.current }),
+        body: JSON.stringify({ refresh: true, language: currentLanguageRef.current, sourceId: currentSourceIdRef.current }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -613,12 +615,13 @@ export function useVoiceSession(): UseVoiceSessionResult {
 
   const currentNotebookIdRef = useRef<string>("");
   const sessionInfoRef = useRef<SessionResponseBody | null>(null);
+  const currentSourceIdRef = useRef<string | null>(null);
 
-  const attemptStart = useCallback(async (notebookId: string, language: string, attempts = 0): Promise<SessionResponseBody> => {
+  const attemptStart = useCallback(async (notebookId: string, language: string, sourceId?: string | null, attempts = 0): Promise<SessionResponseBody> => {
     const res = await fetch(`/api/notebooks/${notebookId}/voice/session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ language }),
+      body: JSON.stringify({ language, sourceId: sourceId ?? null }),
     });
 
     if (!res.ok) {
@@ -635,12 +638,12 @@ export function useVoiceSession(): UseVoiceSessionResult {
       if (kind === "session_active" && attempts < 3) {
         await fetch(`/api/notebooks/${notebookId}/voice/session`, { method: "DELETE" }).catch(() => {});
         await new Promise((r) => setTimeout(r, 500));
-        return attemptStart(notebookId, language, attempts + 1);
+        return attemptStart(notebookId, language, sourceId, attempts + 1);
       }
 
       if (kind === "rate_limited" && attempts < 3) {
         await new Promise((r) => setTimeout(r, 2000));
-        return attemptStart(notebookId, language, attempts + 1);
+        return attemptStart(notebookId, language, sourceId, attempts + 1);
       }
 
       activeRef.current = false;
@@ -653,7 +656,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     return (await res.json()) as SessionResponseBody;
   }, []);
 
-  const start = useCallback(async (notebookId: string, language: string = "en") => {
+  const start = useCallback(async (notebookId: string, language: string = "en", sourceId?: string | null) => {
     if (activeRef.current) return;
     cancelReconnect();
     activeRef.current = true;
@@ -672,10 +675,11 @@ export function useVoiceSession(): UseVoiceSessionResult {
 
     currentNotebookIdRef.current = notebookId;
     currentLanguageRef.current = language;
+    currentSourceIdRef.current = sourceId ?? null;
 
     let sessionInfo: SessionResponseBody;
     try {
-      sessionInfo = await attemptStart(notebookId, language);
+      sessionInfo = await attemptStart(notebookId, language, sourceId);
     } catch {
       return;
     }

@@ -55,6 +55,9 @@ export type MessageDTO = {
   content: string;
   citations?: Citation[] | null;
   createdAt: string;
+  /** null = the notebook's "All sources" chat; set to a source id for that
+   *  source's own independent chat thread. */
+  sourceId: string | null;
 };
 
 export type AudioStatus = "QUEUED" | "SCRIPTING" | "SYNTHESIZING" | "READY" | "FAILED";
