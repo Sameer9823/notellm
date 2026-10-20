@@ -8,12 +8,13 @@ export const redis =
   new Redis(serverEnv.redis.url, {
     maxRetriesPerRequest: 3,
     lazyConnect: true,
-    // Fail fast on connection errors instead of throwing async errors
+    connectTimeout: 4000,
+    commandTimeout: 4000,
     retryStrategy: (times) => {
-      if (times > 3) return null; // Stop retrying after 3 attempts
+      if (times > 3) return null;
       return Math.min(times * 200, 2000);
     },
-    enableOfflineQueue: false, // Don't queue commands when offline
+    enableOfflineQueue: false,
   });
 
 // Handle connection errors gracefully to avoid unhandled rejections

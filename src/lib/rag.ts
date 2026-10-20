@@ -1,6 +1,7 @@
 import { embedQuery, openai, CHAT_MODEL, generateHydePassage } from "@/lib/openai";
 import { searchNotebook, type ChunkPayload } from "@/lib/qdrant";
 import { tavilySearch } from "@/lib/tavily";
+import { describeError } from "@/lib/utils";
 
 export type RetrievedChunk = ChunkPayload & { score: number; url?: string };
 
@@ -17,11 +18,17 @@ export async function retrieve(
   k = 8,
   sourceId?: string | null
 ): Promise<RetrievedChunk[]> {
-  const vector = await embedQuery(question);
-  const hits = await searchNotebook(notebookId, vector, k, sourceId);
-  return hits
-    .filter((h) => h.score >= SIMILARITY_FLOOR)
-    .map((h) => ({ ...h.payload, score: h.score }));
+  try {
+    const vector = await embedQuery(question);
+    const hits = await searchNotebook(notebookId, vector, k, sourceId);
+    return hits
+      .filter((h) => h.score >= SIMILARITY_FLOOR)
+      .map((h) => ({ ...h.payload, score: h.score }));
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[rag] retrieve failed:", describeError(err));
+    throw err;
+  }
 }
 
 /** Second-chance retrieval using HyDE: embeds a short hypothetical answer
@@ -62,7 +69,7 @@ export async function retrieveWeb(question: string, limit = 4): Promise<Retrieve
     }));
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.warn("[rag] Web search failed, continuing without it:", err);
+    console.error("[rag] Web search failed, continuing without it:", describeError(err));
     return [];
   }
 }
@@ -126,9 +133,11 @@ export async function streamAnswer(
     try {
       chunks = await retrieveWithHyde(notebookId, question, 8, sourceId);
       usedHyde = chunks.length > 0;
-    } catch {
+    } catch (err) {
       // HyDE is a best-effort enhancement — fall through to out-of-source
       // handling below if it fails for any reason (e.g. rate limit).
+      // eslint-disable-next-line no-console
+      console.error("[rag] retrieveWithHyde failed:", describeError(err));
     }
   }
 

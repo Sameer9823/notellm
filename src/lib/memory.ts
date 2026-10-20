@@ -2,6 +2,7 @@ import { v4 as uuid } from "uuid";
 import { db } from "@/lib/db";
 import { openai, CHAT_MODEL, embedQuery, withRetry } from "@/lib/openai";
 import { upsertMemoryVector, deleteMemoryVector, searchMemories } from "@/lib/qdrant";
+import { describeError } from "@/lib/utils";
 
 /**
  * Long-term user memory, ported from sourcelm's Mem0-backed feature but
@@ -98,7 +99,7 @@ export async function getMemoryContext(userId: string, queryText?: string): Prom
       }
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.warn("[memory] Semantic search failed, falling back to recency:", err);
+      console.error("[memory] Semantic search failed, falling back to recency:", describeError(err));
     }
   }
 

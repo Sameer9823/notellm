@@ -4,11 +4,12 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { UserButton } from "@clerk/nextjs";
-import { ArrowLeft, GraduationCap, Headphones, Map, Share2, StickyNote, Maximize2, Minimize2, PanelLeft, PanelRight } from "lucide-react";
+import { ArrowLeft, GraduationCap, Headphones, Map, Share2, StickyNote, Maximize2, Minimize2, PanelLeft, PanelRight, Download } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
 import { SourcesRail } from "@/components/notebook/SourcesRail";
 import { AddSourceDialog } from "@/components/source/AddSourceDialog";
 import { ShareDialog } from "@/components/notebook/ShareDialog";
+import { ExportDialog } from "@/components/notebook/ExportDialog";
 import { ChatPanel, type ChatPanelHandle } from "@/components/chat/ChatPanel";
 import { StudioPanel } from "@/components/studio/StudioPanel";
 import { AudioOverviewPanel } from "@/components/studio/AudioOverviewPanel";
@@ -49,6 +50,7 @@ export function NotebookClient() {
   const [rightPanel, setRightPanel] = useState<RightPanel>(null);
   const [addSourceOpen, setAddSourceOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const chatRef = useRef<ChatPanelHandle>(null);
   const { notes, loading: notesLoading, addNote, deleteNote, reload: reloadNotes } = useNotes(id);
   const [resetKey, setResetKey] = useState(0);
@@ -108,6 +110,36 @@ export function NotebookClient() {
     setRightPanel(null);
     setRightOpen(false);
   }, []);
+
+  const handleExport = useCallback(async (options: {
+    format: "pdf" | "docx";
+    sections: string[];
+    includeChat: boolean;
+    includeCitations: boolean;
+    includeSourceText: boolean;
+    includeAISummary: boolean;
+    includeMemory: boolean;
+  }) => {
+    const res = await fetch(`/api/notebooks/${id}/export`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(options),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: "Export failed" }));
+      throw new Error(err.error);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const ext = options.format === "docx" ? "docx" : "pdf";
+    a.download = `${notebook?.title || "notebook"}-${new Date().toISOString().slice(0, 10)}.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, [id, notebook?.title]);
 
   const audioOpen = rightPanel?.kind === "audio";
   const roadmapOpen = rightPanel?.kind === "roadmap";
@@ -317,6 +349,14 @@ export function NotebookClient() {
           <Button
             variant="ghost"
             size="icon"
+            onClick={() => setExportOpen(true)}
+            title="Export"
+          >
+            <Download className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
             className={cn(audioOpen && "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary")}
             onClick={openAudio}
             title="Audio overview"
@@ -422,6 +462,13 @@ export function NotebookClient() {
             onOpenChange={setShareOpen}
             initialIsPublic={!!notebook.isPublic}
             initialSlug={notebook.shareSlug}
+          />
+          <ExportDialog
+            open={exportOpen}
+            onOpenChange={setExportOpen}
+            notebookTitle={notebook.title}
+            hasMessages={notebook.messages.length > 0}
+            onExport={handleExport}
           />
           <CommandPalette
             onAddSource={() => setAddSourceOpen(true)}

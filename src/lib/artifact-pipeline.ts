@@ -195,7 +195,9 @@ export async function generateArtifactContent(type: ArtifactType, sourceText: st
       );
     case "MINDMAP":
       return callJsonModel(
-        `Generate a mind map with 10-30 nodes, shape { "nodes": [{ "id": "...", "label": "..." }], "edges": [{ "id": "...", "source": "...", "target": "..." }] }. Use a central topic node and branch out logically from:\n\n${sourceText}`,
+        `Generate a mind map as { "nodes": [{ "id": "...", "label": "..." }], "edges": [{ "id": "...", "source": "...", "target": "..." }] }.
+Structure: 1 central root topic with 4-7 direct branches. Each branch has 2-4 children (depth 2). At most 3 depth levels total (root -> branch -> child). Each branch and child should have a label of 2-5 words (max 5 words). Include 20-35 nodes total. Connect every node to its parent via an edge (every node except the root must have exactly one incoming edge). Node ids must be unique non-empty strings.
+Use ONLY the provided source content — do not invent facts.\n\n${sourceText}`,
         mindmapSchema,
         system
       );

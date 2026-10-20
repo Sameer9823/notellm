@@ -7,6 +7,10 @@ import { safeSend } from "@/lib/inngest/client";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 import { consumeCredits, creditsExhaustedResponse, CREDIT_COSTS } from "@/lib/credits";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 30;
+
 async function ownedNotebook(id: string, userId: string) {
   const notebook = await db.notebook.findUnique({ where: { id } });
   if (!notebook || notebook.ownerId !== userId) return null;

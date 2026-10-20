@@ -15,11 +15,26 @@ const bodySchema = z.object({
   webSearch: z.boolean().optional().default(false),
 });
 
-// Sentinel the client splits on to separate the streamed prose from the
-// trailing citations payload, without needing a second round-trip.
 const CITATIONS_MARKER = "\n\u0000CITATIONS\u0000";
 
 export const maxDuration = 60;
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+function logError(context: string, err: unknown) {
+  const e = err as { name?: string; message?: string; status?: number; code?: string | number; cause?: unknown };
+  // eslint-disable-next-line no-console
+  console.error(
+    `[${context}]`,
+    JSON.stringify({
+      name: e?.name ?? typeof err,
+      message: e?.message ?? String(err),
+      status: e?.status,
+      code: e?.code,
+      cause: e?.cause ? { name: (e.cause as Error)?.name, message: (e.cause as Error)?.message } : undefined,
+    })
+  );
+}
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { userId } = await auth();
@@ -42,9 +57,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { question, webSearch } = parsed.data;
   let sourceId = parsed.data.sourceId ?? null;
 
-  // Guard against scoping to a source that doesn't belong to this notebook
-  // (or doesn't exist) — silently fall back to "all sources" rather than
-  // erroring, since this only ever comes from the sources rail selection.
   if (sourceId) {
     const scoped = await db.source.findUnique({ where: { id: sourceId }, select: { notebookId: true } });
     if (!scoped || scoped.notebookId !== notebookId) sourceId = null;
@@ -53,10 +65,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const spend = await consumeCredits(userId, CREDIT_COSTS.chat);
   if (!spend.allowed) return creditsExhaustedResponse(spend.status);
 
-  // Fetch the most recent 20 messages (descending), then reverse to
-  // chronological order so the model sees the latest turns. The previous
-  // `orderBy: "asc"` + `take: 20` returned the OLDEST 20 messages, which
-  // meant after ~10 exchanges the model never saw the current conversation.
   const priorMessages = await db.message.findMany({
     where: { notebookId },
     orderBy: { createdAt: "desc" },
@@ -71,26 +79,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   await db.message.create({ data: { notebookId, role: "USER", content: question } });
 
-  // Surfaced on every response so the client-side credits badge can update
-  // instantly from the same round trip, without a separate /api/credits poll.
   const creditsHeaders = {
     "X-Credits-Balance": String(spend.status.balance),
     "X-Credits-Max": String(spend.status.max),
     "X-Credits-Reset": String(spend.status.resetAt),
   };
 
-  const memoryContext = await getMemoryContext(userId, question).catch(() => "");
+  const memoryContext = await getMemoryContext(userId, question).catch((err) => {
+    logError("query/getMemoryContext", err);
+    return "";
+  });
 
   let retrieval: Awaited<ReturnType<typeof streamAnswer>>;
   try {
     retrieval = await streamAnswer(notebookId, question, history, sourceId, memoryContext, webSearch);
   } catch (err) {
-    // streamAnswer threw before streaming started (e.g. OpenAI unreachable).
-    // Refund the consumed credit and return a clean 502 so the client can
-    // surface a useful error instead of a bare 500 after a silent credit loss.
     void refundCredits(userId, CREDIT_COSTS.chat);
-    // eslint-disable-next-line no-console
-    console.error("[query] streamAnswer failed before streaming:", describeError(err));
+    logError("query/streamAnswer", err);
     return NextResponse.json(
       { error: "The AI service is temporarily unavailable. Your credit has been refunded." },
       { status: 502, headers: creditsHeaders }
@@ -102,52 +107,54 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const encoder = new TextEncoder();
   let full = "";
 
-  const readable = new ReadableStream({
-    async start(controller) {
-      try {
-        for await (const part of stream) {
-          const delta = part.choices[0]?.delta?.content ?? "";
-          if (delta) {
-            full += delta;
-            controller.enqueue(encoder.encode(delta));
+  const readable = new ReadableStream(
+    {
+      async start(controller) {
+        try {
+          for await (const part of stream) {
+            const delta = part.choices[0]?.delta?.content ?? "";
+            if (delta) {
+              full += delta;
+              controller.enqueue(encoder.encode(delta));
+            }
           }
-        }
-        const citations = extractCitations(full, chunks);
-        await db.message.create({
-          data: { notebookId, role: "ASSISTANT", content: full, citations },
-        });
-        controller.enqueue(encoder.encode(CITATIONS_MARKER + JSON.stringify(citations)));
-        controller.close();
+          const citations = extractCitations(full, chunks);
+          await db.message.create({
+            data: { notebookId, role: "ASSISTANT", content: full, citations },
+          });
+          controller.enqueue(encoder.encode(CITATIONS_MARKER + JSON.stringify(citations)));
+          controller.close();
 
-        // Ported from sourcelm's rolling conversation-memory sync: extract
-        // durable facts from this exchange in the background so future
-        // conversations (in any notebook) can draw on them. Fire-and-forget
-        // and best-effort — never blocks or fails the chat response.
-        after(() =>
-          extractMemoriesFromMessages(userId, [
-            { role: "user", content: question },
-            { role: "assistant", content: full },
-          ])
-        );
-      } catch (err) {
-        // Stream failed after partial output — save what was streamed as the
-        // assistant message, refund the credit, and surface a clean error.
-        void refundCredits(userId, CREDIT_COSTS.chat);
-        // eslint-disable-next-line no-console
-        console.error("[query] stream failed mid-response:", describeError(err));
-        const message = full.trim()
-          ? `${full.trim()}\n\n[Response was interrupted before completion.]`
-          : "The response was interrupted before completion.";
-        await db.message.create({
-          data: { notebookId, role: "ASSISTANT", content: message, citations: [] },
-        });
-        controller.enqueue(encoder.encode(CITATIONS_MARKER + JSON.stringify([])));
-        controller.error(new Error("Stream interrupted"));
-      }
+          after(() =>
+            extractMemoriesFromMessages(userId, [
+              { role: "user", content: question },
+              { role: "assistant", content: full },
+            ])
+          );
+        } catch (err) {
+          void refundCredits(userId, CREDIT_COSTS.chat);
+          logError("query/stream-mid", err);
+          const message = full.trim()
+            ? `${full.trim()}\n\n[Response was interrupted before completion.]`
+            : "The response was interrupted before completion.";
+          await db.message.create({
+            data: { notebookId, role: "ASSISTANT", content: message, citations: [] },
+          });
+          controller.enqueue(encoder.encode(CITATIONS_MARKER + JSON.stringify([])));
+          controller.error(new Error("Stream interrupted"));
+        }
+      },
     },
-  });
+    { highWaterMark: 1 }
+  );
 
   return new Response(readable, {
-    headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache", ...creditsHeaders },
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "Content-Encoding": "none",
+      "X-Accel-Buffering": "no",
+      ...creditsHeaders,
+    },
   });
 }

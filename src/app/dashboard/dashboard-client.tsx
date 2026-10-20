@@ -13,6 +13,7 @@ import {
   Search,
   Library,
   X,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/ui/logo";
@@ -20,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { NotebookCard } from "@/components/notebook/NotebookCard";
 import { NotebookFormDialog } from "@/components/notebook/NotebookFormDialog";
+import { ExportAllDialog } from "@/components/notebook/ExportAllDialog";
 import {
   Dialog,
   DialogContent,
@@ -43,6 +45,8 @@ export function DashboardClient() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<NotebookDTO | null>(null);
   const [deleting, setDeleting] = useState<NotebookDTO | null>(null);
+  const [exportAllOpen, setExportAllOpen] = useState(false);
+  const [exportAllLoading, setExportAllLoading] = useState(false);
 
   async function load() {
     try {
@@ -74,6 +78,44 @@ export function DashboardClient() {
       load();
     } catch {
       toast.error("Couldn't delete notebook");
+    }
+  }
+
+  async function handleExportAll() {
+    setExportAllLoading(true);
+    try {
+      const res = await fetch("/api/export/all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          format: "pdf",
+          sections: ["sources", "notes", "summary", "roadmap", "flashcards", "audio", "appendix"],
+          includeChat: false,
+          includeCitations: true,
+          includeSourceText: false,
+          includeAISummary: false,
+          includeMemory: true,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Export failed" }));
+        throw new Error(err.error);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `footnote-export-all-${new Date().toISOString().slice(0, 10)}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Exported all notebooks");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setExportAllLoading(false);
+      setExportAllOpen(false);
     }
   }
 
@@ -139,6 +181,15 @@ export function DashboardClient() {
               </Link>
             </div>
             <CreditsBadge credits={credits} loading={creditsLoading} />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setExportAllOpen(true)}
+              title="Export all notebooks"
+              disabled={exportAllLoading || !notebooks?.length}
+            >
+              <Download className="h-4 w-4" />
+            </Button>
             <ThemeToggle />
             <UserButton />
           </div>
@@ -263,6 +314,8 @@ export function DashboardClient() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ExportAllDialog open={exportAllOpen} onOpenChange={setExportAllOpen} onExportAll={handleExportAll} loading={exportAllLoading} />
     </div>
   );
 }

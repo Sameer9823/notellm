@@ -92,7 +92,7 @@ function securityHeaders() {
 }
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["pdf-parse", "jsdom", "@mozilla/readability", "node-webvtt"],
+  serverExternalPackages: ["pdf-parse", "jsdom", "@mozilla/readability", "node-webvtt", "pdfkit", "fflate", "fontkit", "docx"],
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "res.cloudinary.com" },

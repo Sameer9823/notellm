@@ -1,16 +1,26 @@
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { serverEnv } from "@/lib/env";
+import { describeError } from "@/lib/utils";
 
 const _env = serverEnv.qdrant;
 export const COLLECTION = _env.collection;
 const EMBEDDING_DIM = 1536;
 
+function normalizeQdrantUrl(url: string): string {
+  let normalized = url;
+  if (!/^https?:\/\//i.test(normalized)) {
+    normalized = `https://${normalized}`;
+  }
+  return normalized.replace(/\/+$/, "");
+}
+
+const qdrantUrl = normalizeQdrantUrl(_env.url);
 const globalForQdrant = globalThis as unknown as { qdrant?: QdrantClient };
 
 export const qdrant =
   globalForQdrant.qdrant ??
   new QdrantClient({
-    url: _env.url,
+    url: qdrantUrl,
     apiKey: _env.apiKey,
   });
 
@@ -18,33 +28,35 @@ if (!serverEnv.isProduction) globalForQdrant.qdrant = qdrant;
 
 let ensured = false;
 
-/** Idempotently ensures the shared collection exists, with payload indexes
- *  for the fields we filter on (notebook isolation + source scoping). */
 export async function ensureCollection() {
   if (ensured) return;
-  const collections = await qdrant.getCollections();
-  const exists = collections.collections.some((c) => c.name === COLLECTION);
+  try {
+    const collections = await qdrant.getCollections();
+    const exists = collections.collections.some((c) => c.name === COLLECTION);
 
-  if (!exists) {
-    await qdrant.createCollection(COLLECTION, {
-      vectors: { size: EMBEDDING_DIM, distance: "Cosine" },
-      optimizers_config: { default_segment_number: 2 },
-    });
-  }
-  // Always attempt each index — even if the collection already existed, the
-  // indexes may not (e.g. createCollection succeeded but createPayloadIndex
-  // failed on a transient network error, and the module-level `ensured` flag
-  // prevented a retry). Ignoring "already exists" errors makes this safe to
-  // call repeatedly.
-  for (const field of ["notebookId", "sourceId"]) {
-    try {
-      await qdrant.createPayloadIndex(COLLECTION, { field_name: field, field_schema: "keyword" });
-    } catch (err) {
-      // 409 / already-exists is expected on subsequent calls — ignore.
-      if (!(err instanceof Error && /already exist/i.test(err.message))) throw err;
+    if (!exists) {
+      await qdrant.createCollection(COLLECTION, {
+        vectors: { size: EMBEDDING_DIM, distance: "Cosine" },
+        optimizers_config: { default_segment_number: 2 },
+      });
     }
+    for (const field of ["notebookId", "sourceId"]) {
+      try {
+        await qdrant.createPayloadIndex(COLLECTION, { field_name: field, field_schema: "keyword" });
+      } catch (err) {
+        if (!(err instanceof Error && /already exist/i.test(err.message))) {
+          // eslint-disable-next-line no-console
+          console.error("[qdrant] ensureCollection: payload index failed for", field, describeError(err));
+          throw err;
+        }
+      }
+    }
+    ensured = true;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[qdrant] ensureCollection failed:", describeError(err));
+    throw err;
   }
-  ensured = true;
 }
 
 export type ChunkPayload = {
@@ -108,13 +120,19 @@ export async function searchNotebook(notebookId: string, vector: number[], limit
   await ensureCollection();
   const must: Record<string, unknown>[] = [{ key: "notebookId", match: { value: notebookId } }];
   if (sourceId) must.push({ key: "sourceId", match: { value: sourceId } });
-  const res = await qdrant.query(COLLECTION, {
-    query: vector,
-    limit,
-    filter: { must },
-    with_payload: true,
-  });
-  return res as unknown as { id: string; score: number; payload: ChunkPayload }[];
+  try {
+     const res = await qdrant.query(COLLECTION, {
+       query: vector,
+       limit,
+       filter: { must },
+       with_payload: true,
+     });
+     return ((res as unknown as { points?: unknown }).points ?? []) as { id: string; score: number; payload: ChunkPayload }[];
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[qdrant] searchNotebook failed:", describeError(err));
+    throw err;
+  }
 }
 
 /** Retrieves the already-computed embedding vectors for a specific set of
@@ -146,21 +164,30 @@ let memoryCollectionEnsured = false;
 
 async function ensureMemoryCollection() {
   if (memoryCollectionEnsured) return;
-  const collections = await qdrant.getCollections();
-  const exists = collections.collections.some((c) => c.name === MEMORY_COLLECTION);
-  if (!exists) {
-    await qdrant.createCollection(MEMORY_COLLECTION, {
-      vectors: { size: EMBEDDING_DIM, distance: "Cosine" },
-      optimizers_config: { default_segment_number: 1 }, // small collection — no need for multiple segments
-    });
-  }
-  // Always attempt the index — see ensureCollection() above for rationale.
   try {
-    await qdrant.createPayloadIndex(MEMORY_COLLECTION, { field_name: "userId", field_schema: "keyword" });
+    const collections = await qdrant.getCollections();
+    const exists = collections.collections.some((c) => c.name === MEMORY_COLLECTION);
+    if (!exists) {
+      await qdrant.createCollection(MEMORY_COLLECTION, {
+        vectors: { size: EMBEDDING_DIM, distance: "Cosine" },
+        optimizers_config: { default_segment_number: 1 },
+      });
+    }
+    try {
+      await qdrant.createPayloadIndex(MEMORY_COLLECTION, { field_name: "userId", field_schema: "keyword" });
+    } catch (err) {
+      if (!(err instanceof Error && /already exist/i.test(err.message))) {
+        // eslint-disable-next-line no-console
+        console.error("[qdrant] ensureMemoryCollection: payload index failed:", describeError(err));
+        throw err;
+      }
+    }
+    memoryCollectionEnsured = true;
   } catch (err) {
-    if (!(err instanceof Error && /already exist/i.test(err.message))) throw err;
+    // eslint-disable-next-line no-console
+    console.error("[qdrant] ensureMemoryCollection failed:", describeError(err));
+    throw err;
   }
-  memoryCollectionEnsured = true;
 }
 
 export type MemoryPayload = { userId: string; memory: string; source: "MANUAL" | "LEARNED" };
@@ -180,11 +207,11 @@ export async function deleteMemoryVector(id: string) {
  *  relevant facts don't fall out of context once a user has many memories. */
 export async function searchMemories(userId: string, vector: number[], limit = 8) {
   await ensureMemoryCollection();
-  const res = await qdrant.query(MEMORY_COLLECTION, {
-    query: vector,
-    limit,
-    filter: { must: [{ key: "userId", match: { value: userId } }] },
-    with_payload: true,
-  });
-  return res as unknown as { id: string; score: number; payload: MemoryPayload }[];
+   const res = await qdrant.query(MEMORY_COLLECTION, {
+     query: vector,
+     limit,
+     filter: { must: [{ key: "userId", match: { value: userId } }] },
+     with_payload: true,
+   });
+    return ((res as unknown as { points?: unknown }).points ?? []) as { id: string; score: number; payload: MemoryPayload }[];
 }

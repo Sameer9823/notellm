@@ -3,6 +3,10 @@ import { auth } from "@clerk/nextjs/server";
 import { getCreditStatus } from "@/lib/credits";
 import { CREDITS_MAX, CREDITS_WINDOW_MS, CREDITS_WINDOW_HOURS, type CreditStatus } from "@/lib/credits";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 10;
+
 // Returns a full default credit status when the database is unreachable or
 // tables don't exist yet — the credits badge is a read-only display, so
 // failing open with a full balance keeps the UI working instead of crashing

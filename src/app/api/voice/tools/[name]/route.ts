@@ -7,6 +7,7 @@ import { TOOL_NAMES, createToolByName } from "@/lib/voice/tools/registry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 20;
 
 const argsSchema = z.object({ query: z.string().min(1).max(300) });
 

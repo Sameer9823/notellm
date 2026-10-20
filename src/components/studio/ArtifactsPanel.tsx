@@ -349,8 +349,8 @@ function ArtifactViewer({ artifact, notebookId }: { artifact: ArtifactDTO; noteb
       const edges = content?.edges ?? [];
       if (!nodes.length) return <NoContent />;
       return (
-        <div className="h-[70vh] min-h-[420px] w-full">
-          <MindMapViewer nodes={nodes} edges={edges} />
+          <div className="h-[calc(90vh-9rem)] min-h-[420px] w-full">
+            <MindMapViewer nodes={nodes} edges={edges} />
         </div>
       );
     }
