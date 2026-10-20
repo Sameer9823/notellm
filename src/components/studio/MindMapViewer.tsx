@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
+  BackgroundVariant,
   Controls,
   Handle,
   MiniMap,
@@ -12,569 +13,504 @@ import {
   ReactFlowProvider,
   useReactFlow,
   type Edge,
-  type FitViewOptions,
   type Node,
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ChevronDown, ChevronRight, Minus, Plus, Scan, Search, X } from "lucide-react";
+import { Minus, Plus, Scan, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+
+// ---------------------------------------------------------------------------
+// Mind map viewer
+//  - Builds ONE normalized tree from whatever the LLM returned (cycles, several
+//    roots, chains, over-deep nesting) and derives nodes AND edges from that tree,
+//    so every visible node is always connected to its parent.
+//  - Root + level 1 + level 2 are open by default; deeper branches show "+N".
+//  - Branch colors, glowing curved edges, hover path highlight, search, legend.
+// ---------------------------------------------------------------------------
 
 type MindMapNode = { id: string; label: string };
 type MindMapEdge = { id: string; source: string; target: string };
 
-const NODE_WIDTH = 190;
-const ROOT_WIDTH = 240;
+const MAX_DEPTH = 3; // levels 0..3 are kept; anything deeper is flattened into level 3
+const OPEN_DEPTH = 2; // nodes at this depth (and deeper) start collapsed
+const ROW_GAP = 66;
 const NODE_HEIGHT = 48;
-const ROW_GAP = 64;
-const COL_GAP = 320;
-const MAX_DEPTH = 3;
+const COL_GAP = 330;
 
-const BRANCH_COLORS = [
-  "#F59E0B",
-  "#0D9488",
-  "#8B5CF6",
-  "#F43F5E",
-  "#0EA5E9",
-  "#84CC16",
-  "#F97316",
-  "#EC4899",
-] as const;
-
-const TINT_OPACITIES = ["33", "55", "77", "99"];
+const PALETTE = ["#FBBF24", "#2DD4BF", "#A78BFA", "#FB7185", "#38BDF8", "#A3E635", "#FB923C", "#F472B6"];
+const ROOT_GRADIENT = "linear-gradient(135deg,#FBBF24 0%,#FB7185 100%)";
+const widthFor = (level: number) => (level === 0 ? 270 : level === 1 ? 270 : level === 2 ? 235 : 215);
 
 type TreeNode = { id: string; label: string; children: TreeNode[] };
-type Placement = { x: number; y: number; direction: 1 | -1; depth: number; branchIndex: number };
+type Placement = {
+  level: number;
+  branch: number;
+  parent: string | null;
+  color: string;
+  x: number;
+  y: number;
+  direction: 1 | -1;
+};
 
-function toInlineTokens(text: string): string[] {
-  return text.split(/[,|]/).map((s) => s.trim()).filter(Boolean);
-}
-
-function flattenOrphanSingleChild(root: TreeNode): TreeNode {
-  while (root.children.length === 1 && root.children[0]?.children.length > 0) {
-    const only = root.children[0];
-    root.children = only.children;
-  }
-  return root;
-}
+// --------------------------- tree building ---------------------------------
 
 function buildTree(nodes: MindMapNode[], edges: MindMapEdge[]): TreeNode | null {
   if (!nodes.length) return null;
-
   const nodeMap = new Map(nodes.map((n) => [n.id, n]));
-  const children = new Map<string, string[]>();
-  const incoming = new Map<string, number>();
-  const seenParents = new Map<string, Set<string>>();
-
-  for (const n of nodes) {
-    children.set(n.id, []);
-    incoming.set(n.id, 0);
-    seenParents.set(n.id, new Set());
-  }
+  const kids = new Map<string, string[]>(nodes.map((n) => [n.id, []]));
+  const hasParent = new Set<string>();
 
   for (const e of edges) {
-    if (!children.has(e.source) || !incoming.has(e.target)) continue;
-    if (e.source === e.target) continue;
-    const parentSet = seenParents.get(e.target)!;
-    if (parentSet.has(e.source)) continue;
-    parentSet.add(e.source);
-    children.get(e.source)!.push(e.target);
-    incoming.set(e.target, (incoming.get(e.target) ?? 0) + 1);
+    if (!kids.has(e.source) || !nodeMap.has(e.target) || e.source === e.target) continue;
+    if (hasParent.has(e.target)) continue; // keep the first parent only
+    hasParent.add(e.target);
+    kids.get(e.source)!.push(e.target);
   }
 
   const claimed = new Set<string>();
-
-  function toTreeNode(id: string, depth: number): TreeNode | null {
-    const source = nodeMap.get(id);
-    if (!source || claimed.has(id)) return null;
+  const toTree = (id: string): TreeNode | null => {
+    const src = nodeMap.get(id);
+    if (!src || claimed.has(id)) return null;
     claimed.add(id);
-    const kids = (children.get(id) ?? [])
-      .map((c) => toTreeNode(c, depth + 1))
-      .filter((c): c is TreeNode => c !== null);
-    return { id: source.id, label: source.label, children: depth >= MAX_DEPTH ? [] : kids };
-  }
+    const children = (kids.get(id) ?? []).map(toTree).filter((c): c is TreeNode => c !== null);
+    return { id: src.id, label: src.label || "Untitled", children };
+  };
 
-  const rootCandidates = nodes.filter((n) => (incoming.get(n.id) ?? 0) === 0);
-  const rootId = rootCandidates.length > 0 ? rootCandidates[0]!.id : nodes[0]?.id;
-  if (!rootId) return null;
-
-  const root = toTreeNode(rootId, 0);
+  const rootId = nodes.find((n) => !hasParent.has(n.id))?.id ?? nodes[0]!.id;
+  const root = toTree(rootId);
   if (!root) return null;
-
-  flattenOrphanSingleChild(root);
-
+  // Anything unreachable from the root (cycles / extra roots) becomes a branch of the root.
   for (const n of nodes) {
-    const orphan = toTreeNode(n.id, 0);
-    if (orphan && orphan !== root) root.children.push(orphan);
+    const orphan = toTree(n.id);
+    if (orphan) root.children.push(orphan);
   }
-
   return root;
 }
 
-function assignBranchColors(root: TreeNode): Map<string, string> {
-  const colorMap = new Map<string, string>();
-  colorMap.set(root.id, "#F59E0B");
-  root.children.forEach((c, i) => {
-    const color = BRANCH_COLORS[i % BRANCH_COLORS.length];
-    colorMap.set(c.id, color);
-    const stack: TreeNode[] = [c];
-    while (stack.length) {
-      const node = stack.pop()!;
-      for (const child of node.children) {
-        colorMap.set(child.id, color);
-        stack.push(child);
-      }
-    }
-  });
-  return colorMap;
+// root -> A -> [B, C, D]  becomes  root -> [B, C, D]
+function liftSingleChains(root: TreeNode): TreeNode {
+  let r = root;
+  while (r.children.length === 1 && r.children[0]!.children.length > 0) {
+    r = { ...r, children: r.children[0]!.children };
+  }
+  return r;
 }
+
+const flattenAll = (n: TreeNode): TreeNode[] => [{ ...n, children: [] }, ...n.children.flatMap(flattenAll)];
+
+// Keep at most MAX_DEPTH levels; deeper nodes are re-attached as siblings at the last level
+// (instead of being dropped).
+function capDepth(n: TreeNode, depth: number): TreeNode {
+  if (depth === MAX_DEPTH - 1) return { ...n, children: n.children.flatMap(flattenAll) };
+  return { ...n, children: n.children.map((c) => capDepth(c, depth + 1)) };
+}
+
+function indexTree(root: TreeNode) {
+  const byId = new Map<string, TreeNode>();
+  const parentOf = new Map<string, string>();
+  const depthOf = new Map<string, number>();
+  (function walk(n: TreeNode, d: number, p: string | null) {
+    byId.set(n.id, n);
+    depthOf.set(n.id, d);
+    if (p) parentOf.set(n.id, p);
+    n.children.forEach((c) => walk(c, d + 1, n.id));
+  })(root, 0, null);
+  return { byId, parentOf, depthOf };
+}
+
+const countDescendants = (n: TreeNode): number => n.children.reduce((s, c) => s + 1 + countDescendants(c), 0);
+
+// ------------------------------- layout ------------------------------------
 
 function countLeaves(node: TreeNode, collapsed: Set<string>): number {
   if (collapsed.has(node.id) || node.children.length === 0) return 1;
-  return node.children.reduce((sum, c) => sum + countLeaves(c, collapsed), 0);
-}
-
-function measureLabel(label: string): number {
-  const tokens = toInlineTokens(label);
-  if (tokens.length === 1) return Math.min(label.length * 8 + 48, NODE_WIDTH);
-  return NODE_WIDTH;
-}
-
-function layoutBranch(
-  node: TreeNode,
-  depth: number,
-  top: number,
-  direction: 1 | -1,
-  branchIndex: number,
-  placements: Map<string, Placement>,
-  collapsed: Set<string>
-): number {
-  const height = countLeaves(node, collapsed) * ROW_GAP;
-  const centerX = direction * depth * COL_GAP + direction * 10;
-  const centerY = top + height / 2;
-  placements.set(node.id, {
-    x: centerX - measureLabel(node.label) / 2,
-    y: centerY - NODE_HEIGHT / 2,
-    direction,
-    depth,
-    branchIndex,
-  });
-
-  if (!collapsed.has(node.id) && depth < MAX_DEPTH) {
-    let cursor = top;
-    for (const child of node.children) {
-      cursor += layoutBranch(child, depth + 1, cursor, direction, branchIndex, placements, collapsed);
-    }
-  }
-  return height;
+  return node.children.reduce((s, c) => s + countLeaves(c, collapsed), 0);
 }
 
 function computeLayout(root: TreeNode, collapsed: Set<string>): Map<string, Placement> {
-  const placements = new Map<string, Placement>();
-  placements.set(root.id, {
-    x: -measureLabel(root.label) / 2,
+  const out = new Map<string, Placement>();
+  out.set(root.id, {
+    level: 0,
+    branch: -1,
+    parent: null,
+    color: PALETTE[0]!,
+    x: -widthFor(0) / 2,
     y: -NODE_HEIGHT / 2,
     direction: 1,
-    depth: 0,
-    branchIndex: 0,
   });
+  if (collapsed.has(root.id) || root.children.length === 0) return out;
 
-  if (collapsed.has(root.id) || root.children.length === 0) return placements;
+  // Balance branches between the right and the left side using the FULL tree (not the visible
+  // part), so a branch never hops sides when something is expanded or collapsed. Biggest
+  // branches are assigned first to the lighter side, then each side keeps the original order.
+  const full = new Set<string>();
+  const weights = root.children.map((child, idx) => ({ child, idx, w: countLeaves(child, full) }));
+  const side = new Map<number, 1 | -1>();
+  let rw = 0;
+  let lw = 0;
+  [...weights]
+    .sort((a, b) => b.w - a.w || a.idx - b.idx)
+    .forEach(({ idx, w }) => {
+      if (rw <= lw) {
+        side.set(idx, 1);
+        rw += w;
+      } else {
+        side.set(idx, -1);
+        lw += w;
+      }
+    });
+  const right: { node: TreeNode; idx: number }[] = [];
+  const left: { node: TreeNode; idx: number }[] = [];
+  weights.forEach(({ child, idx }) => (side.get(idx) === 1 ? right : left).push({ node: child, idx }));
+  const rl = right.reduce((sum, b) => sum + countLeaves(b.node, collapsed), 0);
+  const ll = left.reduce((sum, b) => sum + countLeaves(b.node, collapsed), 0);
 
-  const right: TreeNode[] = [];
-  const left: TreeNode[] = [];
-  let rightLeaves = 0;
-  let leftLeaves = 0;
-
-  for (const child of root.children) {
-    const leaves = countLeaves(child, collapsed);
-    if (rightLeaves <= leftLeaves) {
-      right.push(child);
-      rightLeaves += leaves;
-    } else {
-      left.push(child);
-      leftLeaves += leaves;
+  const place = (node: TreeNode, depth: number, top: number, dir: 1 | -1, branch: number, parent: string): number => {
+    const height = countLeaves(node, collapsed) * ROW_GAP;
+    const cx = dir * depth * COL_GAP;
+    out.set(node.id, {
+      level: depth,
+      branch,
+      parent,
+      color: PALETTE[branch % PALETTE.length]!,
+      x: cx - widthFor(depth) / 2,
+      y: top + height / 2 - NODE_HEIGHT / 2,
+      direction: dir,
+    });
+    if (!collapsed.has(node.id)) {
+      let cursor = top;
+      for (const c of node.children) cursor += place(c, depth + 1, cursor, dir, branch, node.id);
     }
-  }
+    return height;
+  };
 
-  let rightCursor = (-rightLeaves * ROW_GAP) / 2;
-  right.forEach((branch, i) => {
-    rightCursor += layoutBranch(branch, 1, rightCursor, 1, i, placements, collapsed);
-  });
-
-  let leftCursor = (-leftLeaves * ROW_GAP) / 2;
-  left.forEach((branch, i) => {
-    leftCursor += layoutBranch(branch, 1, leftCursor, -1, i, placements, collapsed);
-  });
-
-  return placements;
+  let rc = (-rl * ROW_GAP) / 2;
+  for (const b of right) rc += place(b.node, 1, rc, 1, b.idx, root.id);
+  let lc = (-ll * ROW_GAP) / 2;
+  for (const b of left) lc += place(b.node, 1, lc, -1, b.idx, root.id);
+  return out;
 }
 
-function collectExpandableIds(node: TreeNode, ids: string[] = []): string[] {
-  if (node.children.length > 0) {
-    ids.push(node.id);
-    for (const c of node.children) collectExpandableIds(c, ids);
-  }
-  return ids;
-}
+// -------------------------------- node -------------------------------------
 
-function collectCollapsibleAtDepth(node: TreeNode, ids: string[], maxDepth: number): string[] {
-  if (node.children.length > 0) {
-    ids.push(node.id);
-    if (maxDepth > 0) {
-      for (const c of node.children) collectCollapsibleAtDepth(c, ids, maxDepth - 1);
-    }
-  }
-  return ids;
-}
-
-function getColorForDepth(color: string, depth: number): string {
-  if (depth <= 1) return color;
-  const opacity = TINT_OPACITIES[Math.min(depth - 2, TINT_OPACITIES.length - 1)];
-  return `${color}${opacity}`;
-}
-
-function getTextColorForBackground(bgColor: string): string {
-  const hex = bgColor.replace("#", "");
-  const r = parseInt(hex.substring(0, 2), 16) || 0;
-  const g = parseInt(hex.substring(2, 2), 16) || 0;
-  const b = parseInt(hex.substring(4, 2), 16) || 0;
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  return luminance > 0.55 ? "#1A1C1F" : "#FFFFFF";
-}
-
-function MindMapFlowNode({ data, selected, id }: NodeProps) {
+function MindMapFlowNode({ id, data }: NodeProps) {
   const label = typeof data.label === "string" ? data.label : "Untitled";
+  const level = Number(data.level ?? 0);
+  const color = String(data.color ?? "#FBBF24");
   const hasChildren = Boolean(data.hasChildren);
   const collapsed = Boolean(data.collapsed);
-  const isRoot = Boolean(data.isRoot);
-  const depth = data.depth as number;
-  const branchColor = data.branchColor as string;
+  const hiddenCount = Number(data.hiddenCount ?? 0);
+  const dim = Boolean(data.dim);
+  const match = Boolean(data.match);
   const onToggle = data.onToggle as ((id: string) => void) | undefined;
-  const searchMatch = Boolean(data.searchMatch);
-  const searchPath = Boolean(data.searchPath);
-
-  const depthFontSizes = {
-    0: "text-xl font-black",
-    1: "text-lg font-bold",
-    2: "text-base font-medium",
-    3: "text-sm font-medium",
-  } as const;
-
-  const fontClass = depthFontSizes[depth as keyof typeof depthFontSizes] ?? "text-sm font-medium";
-  const baseColor = isRoot ? "#F59E0B" : branchColor;
-  const bgColor = getColorForDepth(baseColor, depth);
-  const textColor = isRoot ? "#78350F" : getTextColorForBackground(baseColor);
-  const nodeWidth = isRoot ? ROOT_WIDTH : NODE_WIDTH;
-
-  const tokens = toInlineTokens(label);
-  const displayLines = tokens.slice(0, 2);
-  const fullText = tokens.length > 2 ? tokens.join(" · ") : label;
-
   const direction = data.direction === -1 ? -1 : 1;
+  const isRoot = level === 0;
+  const isBranch = level === 1;
 
-  let highlightClass = "";
-  let ringClass = "ring-1 ring-border/30";
-  if (searchMatch) {
-    highlightClass = "ring-2 ring-yellow-400/70";
-    ringClass = "";
-  } else if (searchPath) {
-    highlightClass = "ring-1 ring-yellow-400/50";
-  }
-  if (selected) ringClass = "ring-2 ring-primary/50";
+  const style: React.CSSProperties = {
+    width: widthFor(level),
+    minHeight: NODE_HEIGHT - 4,
+    opacity: dim ? 0.2 : 1,
+    transition: "opacity 160ms, box-shadow 160ms",
+    color: isRoot || isBranch ? "#0B0F14" : color,
+    background: isRoot ? ROOT_GRADIENT : isBranch ? color : `${color}${level === 2 ? "26" : "18"}`,
+    border: `${isRoot ? 2 : 1.5}px solid ${isRoot ? "#FDE68A" : color}`,
+    boxShadow: match
+      ? `0 0 0 3px #ffffffbb, 0 0 22px ${color}`
+      : `0 0 ${isRoot ? 26 : isBranch ? 18 : 10}px ${color}${isRoot || isBranch ? "88" : "55"}`,
+    fontSize: isRoot ? 18 : isBranch ? 15 : level === 2 ? 14 : 13,
+    fontWeight: isRoot || isBranch ? 700 : 500,
+    borderRadius: 999,
+    padding: isRoot ? "10px 20px" : "7px 12px",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    flexDirection: direction === -1 && !isRoot ? "row-reverse" : "row",
+  };
+  const hidden = "!h-1 !w-1 !min-h-0 !min-w-0 !border-0 !bg-transparent !opacity-0";
 
   return (
-    <div
-      style={{ width: nodeWidth, backgroundColor: bgColor, color: textColor }}
-      className={`relative box-border cursor-default rounded-2xl border-2 px-3 py-2 text-center shadow-md transition-all duration-200 ${highlightClass} ${ringClass} ${fontClass}`}
-      role="button"
-      tabIndex={0}
-      aria-label={label}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onToggle?.(id);
-        }
-      }}
-    >
+    <div style={style} title={label}>
       {!isRoot && (
         <Handle
           type="target"
           id={direction === 1 ? "tl" : "tr"}
           position={direction === 1 ? Position.Left : Position.Right}
-          className="h-1 w-1 border-0 bg-transparent !opacity-0"
+          className={hidden}
         />
       )}
-      <div className={`flex items-center justify-center gap-1 ${direction === -1 && !isRoot ? "flex-row-reverse" : ""}`}>
-        {hasChildren && depth < MAX_DEPTH && (
-          <button
-            type="button"
-            className="shrink-0 rounded-md p-0.5 text-muted-foreground/70 hover:bg-black/10 hover:text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggle?.(id);
-            }}
-            aria-label={collapsed ? "Expand branch" : "Collapse branch"}
-          >
-            {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-          </button>
-        )}
-        <p
-          className="flex-1 cursor-default truncate px-1 text-center align-middle leading-tight"
-          title={fullText}
+      <span
+        style={{
+          flex: 1,
+          lineHeight: 1.25,
+          textAlign: isRoot ? "center" : direction === -1 ? "right" : "left",
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+          wordBreak: "break-word",
+        }}
+      >
+        {label}
+      </span>
+      {hasChildren && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle?.(id);
+          }}
+          aria-label={collapsed ? "Expand branch" : "Collapse branch"}
+          style={{
+            flexShrink: 0,
+            minWidth: 22,
+            height: 22,
+            borderRadius: 999,
+            padding: "0 6px",
+            fontSize: 11,
+            fontWeight: 700,
+            lineHeight: "22px",
+            background: isRoot ? "#0B0F14" : isBranch ? "#0B0F14" : color,
+            color: isRoot ? "#FBBF24" : isBranch ? color : "#0B0F14",
+            border: "none",
+            cursor: "pointer",
+          }}
         >
-          {displayLines.length > 0 ? displayLines.join(" · ") : label}
-        </p>
-      </div>
-      {(isRoot || hasChildren) && depth < MAX_DEPTH && (
-        <Handle
-          type="source"
-          id={direction === 1 ? "sr" : "sl"}
-          position={direction === 1 ? Position.Right : Position.Left}
-          className="h-1 w-1 border-0 bg-transparent !opacity-0"
-        />
+          {collapsed ? `+${hiddenCount}` : "−"}
+        </button>
       )}
-      {tokens.length > 2 && (
-        <span className="absolute bottom-1 right-1 rounded-full bg-black/20 px-1 text-[9px] font-bold leading-none opacity-80">
-          +{tokens.length - 2}
-        </span>
+      {isRoot ? (
+        // The root fans out to BOTH sides, so it needs a connection point on each.
+        <>
+          <Handle type="source" id="sr" position={Position.Right} className={hidden} />
+          <Handle type="source" id="sl" position={Position.Left} className={hidden} />
+        </>
+      ) : (
+        hasChildren && (
+          <Handle
+            type="source"
+            id={direction === 1 ? "sr" : "sl"}
+            position={direction === 1 ? Position.Right : Position.Left}
+            className={hidden}
+          />
+        )
       )}
     </div>
   );
 }
 
-MindMapFlowNode.displayName = "MindMapFlowNode";
-
 const nodeTypes = { mindmap: MindMapFlowNode };
+// Bottom padding keeps the map clear of the minimap / zoom buttons in the bottom-right corner.
+const FIT = {
+  padding: { top: "28px", right: "28px", bottom: "128px", left: "28px" },
+  minZoom: 0.3,
+  maxZoom: 1.1,
+} as const;
 
-const nodeColorsForMiniMap = (node: Node) => {
-  const nodeData = node.data as { branchColor?: string; isRoot?: boolean };
-  if (nodeData.isRoot) return "#F59E0B";
-  return nodeData.branchColor ?? "#6B7280";
-};
+// ------------------------------- canvas ------------------------------------
 
 function MindMapCanvas({ nodes, edges }: { nodes: MindMapNode[]; edges: MindMapEdge[] }) {
-  const tree = useMemo(() => buildTree(nodes, edges), [nodes, edges]);
-  const [baseCollapsed, setBaseCollapsed] = useState<Set<string>>(
-    () => new Set(tree ? collectCollapsibleAtDepth(tree, [], 2) : [])
-  );
-  const { fitView, setCenter, getNodes } = useReactFlow();
-  const [searchTerm, setSearchTerm] = useState("");
-  const hasMoreThan40Nodes = nodes.length > 40;
+  const tree = useMemo(() => {
+    const base = buildTree(nodes, edges);
+    return base ? capDepth(liftSingleChains(base), 0) : null;
+  }, [nodes, edges]);
+  const index = useMemo(() => (tree ? indexTree(tree) : null), [tree]);
 
-  const colorMap = useMemo(() => (tree ? assignBranchColors(tree) : new Map()), [tree]);
-  const expandableIds = useMemo(() => (tree ? collectExpandableIds(tree) : []), [tree]);
-  const parentsWithChildren = useMemo(() => new Set(edges.map((e) => e.source)), [edges]);
-
-  const [hoveredNode, setHoveredNode] = useState<string | null>(null);
-
-  const toggleCollapse = useCallback((id: string) => {
-    setBaseCollapsed((cur) => {
-      const next = new Set(cur);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
+  const defaultCollapsed = useMemo(() => {
+    const s = new Set<string>();
+    index?.byId.forEach((n, id) => {
+      // NEVER collapse the root: only nodes at OPEN_DEPTH or deeper that have children.
+      if ((index.depthOf.get(id) ?? 0) >= OPEN_DEPTH && n.children.length > 0) s.add(id);
     });
-  }, []);
+    return s;
+  }, [index]);
 
-  const expandAll = useCallback(() => setBaseCollapsed(new Set()), []);
-  const collapseAll = useCallback(() => setBaseCollapsed(new Set(expandableIds)), [expandableIds]);
-  const fitMap = useCallback(() => {
-    void fitView({ padding: 0.2, duration: 300, minZoom: 0.5, maxZoom: 1.2 });
-  }, [fitView]);
+  // User overrides are tied to the tree they were made for, so new data resets to the default.
+  const [override, setOverride] = useState<{ forTree: unknown; ids: Set<string> } | null>(null);
+  const baseCollapsed = override && override.forTree === tree ? override.ids : defaultCollapsed;
 
-  const pathToRoot = useCallback(
-    (nodeId: string): string[] => {
-      const path: string[] = [nodeId];
-      let current = nodeId;
-      for (const e of edges) {
-        if (e.target === current) {
-          path.push(e.source);
-          current = e.source;
-        }
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const { fitView } = useReactFlow();
+  const fitViewRef = useRef(fitView);
+  useEffect(() => {
+    fitViewRef.current = fitView;
+  });
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const s = new Set<string>();
+    if (!q || !index) return s;
+    index.byId.forEach((n, id) => {
+      if (n.label.toLowerCase().includes(q)) s.add(id);
+    });
+    return s;
+  }, [query, index]);
+
+  // Every ancestor of a match, so the path to it stays readable while the rest fades.
+  const matchPath = useMemo(() => {
+    const s = new Set<string>();
+    if (!matches.size || !index) return s;
+    matches.forEach((id) => {
+      let p = index.parentOf.get(id);
+      while (p) {
+        s.add(p);
+        p = index.parentOf.get(p);
       }
-      return path;
-    },
-    [edges]
-  );
+    });
+    return s;
+  }, [matches, index]);
 
-  const highlightedNodes = useMemo(() => {
-    if (!hoveredNode) return new Set<string>();
-    return new Set(pathToRoot(hoveredNode));
-  }, [hoveredNode, pathToRoot]);
-
-  const { searchMatchIds, searchPathIds } = useMemo(() => {
-    if (!tree || !searchTerm.trim()) return { searchMatchIds: new Set<string>(), searchPathIds: new Set<string>() };
-    const term = searchTerm.toLowerCase();
-    const matched: string[] = [];
-    const find = (n: TreeNode) => {
-      if (n.label.toLowerCase().includes(term)) matched.push(n.id);
-      for (const c of n.children) find(c);
-    };
-    find(tree);
-
-    const nodeSet = new Set(matched);
-    const pathSet = new Set(matched);
-    for (const id of matched) {
-      const p = pathToRoot(id);
-      for (const part of p) pathSet.add(part);
-    }
-    return { searchMatchIds: nodeSet, searchPathIds: pathSet };
-  }, [tree, searchTerm, pathToRoot]);
-
-  const searchExpandedIds = useMemo(() => {
-    if (!tree || searchMatchIds.size === 0) return new Set<string>();
-    const expanded = new Set<string>();
-    for (const id of searchMatchIds) {
-      for (const ancestor of pathToRoot(id)) expanded.add(ancestor);
-    }
-    return expanded;
-  }, [tree, searchMatchIds, pathToRoot]);
-
+  // Open the path to every search match (without touching the user's own toggles).
   const collapsed = useMemo(() => {
-    if (!tree) return new Set<string>();
-    const effective = new Set(baseCollapsed);
-    for (const id of searchExpandedIds) effective.delete(id);
-    return effective;
-  }, [tree, baseCollapsed, searchExpandedIds]);
+    if (!matches.size || !index) return baseCollapsed;
+    const next = new Set(baseCollapsed);
+    matches.forEach((id) => {
+      let p = index.parentOf.get(id);
+      while (p) {
+        next.delete(p);
+        p = index.parentOf.get(p);
+      }
+    });
+    return next;
+  }, [baseCollapsed, matches, index]);
 
-  const placements = useMemo(() => (tree ? computeLayout(tree, collapsed) : new Map()), [tree, collapsed]);
+  const placements = useMemo(() => (tree ? computeLayout(tree, collapsed) : new Map<string, Placement>()), [tree, collapsed]);
+
+  const toggle = useCallback(
+    (id: string) => {
+      setOverride((cur) => {
+        const base = cur && cur.forTree === tree ? cur.ids : defaultCollapsed;
+        const next = new Set(base);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return { forTree: tree, ids: next };
+      });
+    },
+    [tree, defaultCollapsed]
+  );
+  const expandAll = useCallback(() => setOverride({ forTree: tree, ids: new Set() }), [tree]);
+  const collapseAll = useCallback(() => {
+    const s = new Set<string>();
+    index?.byId.forEach((n, id) => {
+      if ((index.depthOf.get(id) ?? 0) >= 1 && n.children.length > 0) s.add(id);
+    });
+    setOverride({ forTree: tree, ids: s });
+  }, [index, tree]);
+
+  const activePath = useMemo(() => {
+    const s = new Set<string>();
+    if (!hovered || !index) return s;
+    let cur: string | undefined = hovered;
+    while (cur) {
+      s.add(cur);
+      cur = index.parentOf.get(cur);
+    }
+    return s;
+  }, [hovered, index]);
 
   const flowNodes: Node[] = useMemo(() => {
-    if (!tree) return [];
-    return nodes
-      .filter((n) => placements.has(n.id))
-      .map((n) => {
-        const p = placements.get(n.id)!;
-        return {
-          id: n.id,
-          type: "mindmap",
-          draggable: false,
-          position: { x: p.x, y: p.y },
-          data: {
-            label: n.label,
-            hasChildren: parentsWithChildren.has(n.id),
-            collapsed: collapsed.has(n.id),
-            isRoot: n.id === tree.id,
-            direction: p.direction,
-            depth: p.depth,
-            branchColor: colorMap.get(n.id) ?? "#6B7280",
-            onToggle: toggleCollapse,
-            searchMatch: searchMatchIds.has(n.id),
-            searchPath: searchPathIds.has(n.id),
-          },
-        };
+    if (!index) return [];
+    const out: Node[] = [];
+    placements.forEach((p, id) => {
+      const n = index.byId.get(id)!;
+      out.push({
+        id,
+        type: "mindmap",
+        draggable: false,
+        position: { x: p.x, y: p.y },
+        // Controlled nodes carry no measured size; without these the MiniMap draws nothing.
+        initialWidth: widthFor(p.level),
+        initialHeight: NODE_HEIGHT,
+        data: {
+          label: n.label,
+          level: p.level,
+          color: p.color,
+          direction: p.direction,
+          hasChildren: n.children.length > 0,
+          collapsed: collapsed.has(id),
+          hiddenCount: countDescendants(n),
+          dim: hovered !== null ? !activePath.has(id) : matches.size > 0 ? !matches.has(id) && !matchPath.has(id) : false,
+          match: matches.has(id),
+          onToggle: toggle,
+        },
       });
-  }, [nodes, tree, placements, parentsWithChildren, collapsed, toggleCollapse, colorMap, searchMatchIds, searchPathIds]);
+    });
+    return out;
+  }, [index, placements, collapsed, hovered, activePath, matches, matchPath, toggle]);
 
+  // Edges come from the TREE (parent -> child), never from the raw LLM edges.
   const flowEdges: Edge[] = useMemo(() => {
-    const glowIntensity = hasMoreThan40Nodes ? 0 : 4;
-    return edges
-      .filter((e) => placements.has(e.source) && placements.has(e.target) && !collapsed.has(e.source))
-      .map((e) => {
-        const targetPlacement = placements.get(e.target);
-        const direction = targetPlacement ? targetPlacement.direction : 1;
-        const sourceBranch = colorMap.get(e.source) ?? "#6B7280";
-        const isDimmed = hoveredNode !== null && !highlightedNodes.has(e.source);
-        const inSearchPath = searchPathIds.has(e.source);
-        const strokeWidth = targetPlacement ? Math.max(1.5, 5 - targetPlacement.depth * 0.8) : 1.5;
-        return {
-          id: e.id,
-          source: e.source,
-          target: e.target,
-          sourceHandle: direction === 1 ? "sr" : "sl",
-          targetHandle: direction === 1 ? "tl" : "tr",
-          type: "bezier",
-          animated: hoveredNode !== null && highlightedNodes.has(e.source),
-          style: {
-            stroke: inSearchPath ? "#eab308" : sourceBranch,
-            strokeWidth: isDimmed ? strokeWidth * 0.4 : inSearchPath ? strokeWidth * 1.3 : strokeWidth,
-            filter:
-              hoveredNode !== null && highlightedNodes.has(e.source)
-                ? `drop-shadow(0 0 ${glowIntensity}px ${sourceBranch})`
-                : `drop-shadow(0 0 ${glowIntensity}px ${sourceBranch})`,
-            opacity: isDimmed ? 0.3 : 1,
-          },
-        };
+    const out: Edge[] = [];
+    placements.forEach((p, id) => {
+      if (!p.parent) return;
+      const hot = activePath.has(id) && activePath.has(p.parent);
+      const dimmed = hovered !== null && !hot;
+      const width = (p.level === 1 ? 4.5 : p.level === 2 ? 3 : 2.2) + (hot ? 1.5 : 0);
+      out.push({
+        id: `${p.parent}->${id}`,
+        source: p.parent,
+        target: id,
+        sourceHandle: p.direction === 1 ? "sr" : "sl",
+        targetHandle: p.direction === 1 ? "tl" : "tr",
+        type: "default", // smooth bezier
+        animated: hot,
+        zIndex: hot ? 10 : 1,
+        style: {
+          stroke: p.color,
+          strokeWidth: width,
+          opacity: dimmed ? 0.12 : 0.9,
+          filter: `drop-shadow(0 0 ${hot ? 7 : 3}px ${p.color})`,
+        },
       });
-  }, [edges, placements, collapsed, colorMap, hoveredNode, highlightedNodes, hasMoreThan40Nodes, searchPathIds]);
+    });
+    return out;
+  }, [placements, hovered, activePath]);
 
-  const handleNodeMouseEnter = useCallback((_event: React.MouseEvent, node: Node) => {
-    const nodeData = node.data as { isRoot?: boolean };
-    if (!nodeData.isRoot) {
-      setHoveredNode(node.id);
-    }
-  }, []);
+  const fitMap = useCallback(() => void fitView({ ...FIT, duration: 350 }), [fitView]);
 
-  const handleNodeMouseLeave = useCallback(() => {
-    setHoveredNode(null);
-  }, []);
-
-  const handleSearch = useCallback(() => {
-    if (!tree || searchMatchIds.size === 0) return;
-    const firstMatch = Array.from(searchMatchIds)[0]!;
-    const targetNode = flowNodes.find((n) => n.id === firstMatch);
-    if (targetNode) {
-      setCenter(targetNode.position.x + NODE_WIDTH / 2, targetNode.position.y + NODE_HEIGHT / 2, {
-        zoom: 1,
-        duration: 500,
-      });
-    }
-  }, [tree, searchMatchIds, flowNodes, setCenter]);
-
+  // Refit whenever the set of visible nodes changes (expand / collapse / search / new data).
+  // Keyed on the node ids only; fitView is read through a ref so a changing function identity
+  // can never cancel the pending timer.
+  const layoutKey = flowNodes.map((n) => n.id).join("|");
   useEffect(() => {
-    if (searchTerm && searchMatchIds.size > 0) {
-      void handleSearch();
-    }
-  }, [searchTerm, searchMatchIds, handleSearch]);
+    if (!layoutKey) return;
+    const t = window.setTimeout(() => void fitViewRef.current({ ...FIT, duration: 300 }), 120);
+    return () => window.clearTimeout(t);
+  }, [layoutKey]);
 
-  const handleLegendClick = useCallback(
-    (color: string) => {
-      const branchNode = flowNodes.find((n) => {
-        const d = n.data as { branchColor?: string; isRoot?: boolean };
-        return d.branchColor === color && d.isRoot !== true;
+  const focusBranch = useCallback(
+    (branch: number) => {
+      const ids: { id: string }[] = [];
+      placements.forEach((p, id) => {
+        if (p.branch === branch) ids.push({ id });
       });
-      if (branchNode) {
-        setCenter(branchNode.position.x + NODE_WIDTH / 2, branchNode.position.y + NODE_HEIGHT / 2, {
-          zoom: 0.6,
-          duration: 500,
-        });
-      }
+      if (ids.length) void fitView({ nodes: ids, padding: 0.25, minZoom: 0.3, maxZoom: 1.1, duration: 450 });
     },
-    [flowNodes, setCenter]
+    [placements, fitView]
   );
 
-  useEffect(() => {
-    const t = window.setTimeout(() => {
-      void fitView({ padding: 0.15, duration: 500, minZoom: 0.6, maxZoom: 1.5 });
-    }, 60);
-    return () => window.clearTimeout(t);
-  }, [fitView]);
-
-  const nodeIds = useMemo(() => getNodes().map((n) => n.id), [getNodes]);
-
-  if (!tree) {
+  if (!tree || !index) {
     return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Mind map data is empty.</div>;
   }
-
-  const fitViewOptions: FitViewOptions = { padding: 0.2, minZoom: 0.6, maxZoom: 1.5 };
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+        <div className="flex max-w-full items-center gap-1.5 overflow-x-auto pb-1">
           {tree.children.map((branch, i) => {
-            const color = BRANCH_COLORS[i % BRANCH_COLORS.length];
+            const color = PALETTE[i % PALETTE.length]!;
             return (
               <button
                 key={branch.id}
                 type="button"
-                onClick={() => handleLegendClick(color)}
-                className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs whitespace-nowrap hover:bg-muted"
+                onClick={() => focusBranch(i)}
+                className="flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs hover:bg-muted"
                 aria-label={`Zoom to ${branch.label} branch`}
               >
-                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color, boxShadow: `0 0 6px ${color}` }} />
                 <span>{branch.label}</span>
               </button>
             );
@@ -583,18 +519,18 @@ function MindMapCanvas({ nodes, edges }: { nodes: MindMapNode[]; edges: MindMapE
         <div className="flex items-center gap-2">
           <div className="relative">
             <Input
-              type="search"
+              type="text"
               placeholder="Search mind map..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
               className="h-8 w-48 pl-9 text-sm"
               aria-label="Search mind map"
             />
-            <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            {searchTerm && (
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            {query && (
               <button
                 type="button"
-                onClick={() => setSearchTerm("")}
+                onClick={() => setQuery("")}
                 className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 hover:text-muted-foreground"
                 aria-label="Clear search"
               >
@@ -614,50 +550,46 @@ function MindMapCanvas({ nodes, edges }: { nodes: MindMapNode[]; edges: MindMapE
         </div>
       </div>
 
-      {searchTerm && searchMatchIds.size === 0 && (
-          <div className="px-3 py-2 text-xs text-muted-foreground">No matches for &quot;{searchTerm}&quot;</div>
-      )}
-
-      <div className="relative min-h-0 flex-1">
+      <div className="relative min-h-0 flex-1" style={{ background: "radial-gradient(ellipse at center, #111823 0%, #0B0F14 75%)" }}>
         <ReactFlow
           nodes={flowNodes}
           edges={flowEdges}
           nodeTypes={nodeTypes}
-          fitView={false}
-          fitViewOptions={fitViewOptions}
-          minZoom={0.4}
-          maxZoom={2}
+          colorMode="dark"
+          fitView
+          fitViewOptions={FIT}
+          minZoom={0.2}
+          maxZoom={1.8}
           nodesDraggable={false}
           nodesConnectable={false}
+          elementsSelectable={false}
           zoomOnScroll
           panOnScroll
           panOnScrollSpeed={0.4}
-          selectionOnDrag={false}
           proOptions={{ hideAttribution: true }}
-          onNodeMouseEnter={handleNodeMouseEnter}
-          onNodeMouseLeave={handleNodeMouseLeave}
+          onNodeMouseEnter={(_, n) => setHovered(n.id)}
+          onNodeMouseLeave={() => setHovered(null)}
         >
-          <Background gap={20} size={1} color="var(--border)" bgColor="var(--background)" />
+          <Background variant={BackgroundVariant.Dots} gap={24} size={1.6} color="#ffffff1f" />
           <MiniMap
             pannable
             zoomable
-            nodeColor={nodeColorsForMiniMap}
-            nodeStrokeWidth={2}
-            nodeBorderRadius={6}
-            maskColor="color-mix(in oklab, var(--background) 55%, transparent)"
-            bgColor="color-mix(in oklab, var(--background) 70%, transparent)"
-            className="hidden rounded-xl border border-border bg-card/90 sm:block"
+            style={{ width: 150, height: 96, background: "rgba(255,255,255,0.05)", borderRadius: 12 }}
+            nodeColor={(n) => String((n.data as { color?: string })?.color ?? "#94a3b8")}
+            nodeStrokeWidth={0}
+            maskColor="rgba(11,15,20,0.6)"
+            className="hidden !rounded-xl !border !border-border sm:block"
           />
           <Controls
             position="bottom-right"
-            className="!rounded-xl !border !border-border !bg-card [&>button]:!border-border [&>button]:!bg-card [&>button]:!text-foreground [&>button:hover]:!bg-muted"
-            showZoom
             showFitView={false}
             showInteractive={false}
+            style={{ marginBottom: 112 }}
+            className="!rounded-xl !border !border-border !bg-card [&>button]:!border-border [&>button]:!bg-card [&>button]:!text-foreground [&>button:hover]:!bg-muted"
           />
-          <Panel position="top-center" className="pointer-events-none">
+          <Panel position="bottom-left" className="pointer-events-none">
             <div className="pointer-events-auto rounded-lg border border-border bg-card/95 px-2 py-1 text-xs text-muted-foreground shadow-sm">
-              {searchTerm ? `${searchMatchIds.size} match${searchMatchIds.size !== 1 ? "es" : ""}` : `${nodeIds.length} nodes`}
+              {query ? `${matches.size} match${matches.size !== 1 ? "es" : ""}` : `${placements.size} of ${index.byId.size} nodes shown`}
             </div>
           </Panel>
         </ReactFlow>
@@ -666,11 +598,9 @@ function MindMapCanvas({ nodes, edges }: { nodes: MindMapNode[]; edges: MindMapE
   );
 }
 
-MindMapCanvas.displayName = "MindMapCanvas";
-
 export function MindMapViewer({ nodes, edges }: { nodes: MindMapNode[]; edges: MindMapEdge[] }) {
   return (
-    <div className="h-full min-h-[480px] w-full animate-in fade-in-0 overflow-hidden rounded-2xl border border-border bg-muted/20">
+    <div className="h-full min-h-[480px] w-full overflow-hidden rounded-2xl border border-border">
       <ReactFlowProvider>
         <MindMapCanvas nodes={nodes} edges={edges} />
       </ReactFlowProvider>
