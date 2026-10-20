@@ -146,6 +146,8 @@ export function NotebookClient() {
   const artifactsOpen = rightPanel?.kind === "study";
   const notesOpen = rightPanel?.kind === "notes";
   const citation = rightPanel?.kind === "citation" ? rightPanel.citation : null;
+  // Which studio tab is showing (drives the highlight in the mobile bottom bar)
+  const activeTab: StudioTabId | null = rightPanel && rightPanel.kind !== "citation" ? rightPanel.kind : null;
 
   const readyYoutubeCount = notebook?.sources.filter((s) => s.type === "YOUTUBE" && s.status === "READY").length ?? 0;
 
@@ -329,7 +331,7 @@ export function NotebookClient() {
 
   return (
     <div className="flex h-dvh flex-col bg-background">
-      <header className="flex shrink-0 items-center justify-between border-b border-border px-3 py-2.5 sm:px-4">
+      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2.5 sm:px-4">
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <Link href="/dashboard" className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
             <ArrowLeft className="h-4 w-4" />
@@ -340,10 +342,12 @@ export function NotebookClient() {
           <span className="truncate font-display text-sm font-semibold">{notebook.title}</span>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
           <CreditsBadge credits={credits} loading={creditsLoading} />
-          <ThemeToggle />
-          <Button variant="ghost" size="icon" onClick={() => setShareOpen(true)} title="Share">
+          <div className="hidden sm:block">
+            <ThemeToggle />
+          </div>
+          <Button variant="ghost" size="icon" onClick={() => setShareOpen(true)} title="Share" aria-label="Share">
             <Share2 className="h-4 w-4" />
           </Button>
           <Button
@@ -351,86 +355,92 @@ export function NotebookClient() {
             size="icon"
             onClick={() => setExportOpen(true)}
             title="Export"
+            aria-label="Export"
           >
             <Download className="h-4 w-4" />
           </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn(audioOpen && "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary")}
-            onClick={openAudio}
-            title="Audio overview"
-            aria-pressed={audioOpen}
-          >
-            <Headphones className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn(roadmapOpen && "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary")}
-            onClick={openRoadmap}
-            title="Learning roadmap"
-            aria-pressed={roadmapOpen}
-          >
-            <Map className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn(artifactsOpen && "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary")}
-            onClick={openStudy}
-            title="Study tools"
-            aria-pressed={artifactsOpen}
-          >
-            <GraduationCap className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn(notesOpen && "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary")}
-            onClick={openNotes}
-            title="Notes"
-            aria-pressed={notesOpen}
-          >
-            <StickyNote className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn(citation && "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary")}
-            onClick={() => {
-              if (rightPanel?.kind === "citation") {
-                closeRightPanel();
-              } else {
-                setRightOpen(true);
-              }
-            }}
-            title={citation ? "Close viewer" : "Toggle Studio"}
-            disabled={!citation && !rightOpen}
-            aria-pressed={!!citation}
-          >
-            <PanelRight className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn(sourcesOpen && "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary")}
-            onClick={() => setSourcesOpen((v) => !v)}
-            title="Toggle Sources (⌘B)"
-            aria-pressed={sourcesOpen}
-          >
-            <PanelLeft className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn(focusMode && "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary")}
-            onClick={() => setFocusMode((v) => !v)}
-            title={focusMode ? "Exit Focus Mode (Esc)" : "Focus Mode (⌘⇧F)"}
-            aria-pressed={focusMode}
-          >
-            {focusMode ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-          </Button>
+
+          {/* Desktop-only: on phones/tablets these live in the bottom navigation bar */}
+          <div className="hidden items-center gap-1.5 lg:flex">
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(audioOpen && "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary")}
+              onClick={openAudio}
+              title="Audio overview"
+              aria-pressed={audioOpen}
+            >
+              <Headphones className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(roadmapOpen && "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary")}
+              onClick={openRoadmap}
+              title="Learning roadmap"
+              aria-pressed={roadmapOpen}
+            >
+              <Map className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(artifactsOpen && "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary")}
+              onClick={openStudy}
+              title="Study tools"
+              aria-pressed={artifactsOpen}
+            >
+              <GraduationCap className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(notesOpen && "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary")}
+              onClick={openNotes}
+              title="Notes"
+              aria-pressed={notesOpen}
+            >
+              <StickyNote className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(citation && "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary")}
+              onClick={() => {
+                if (rightPanel?.kind === "citation") {
+                  closeRightPanel();
+                } else {
+                  setRightOpen(true);
+                }
+              }}
+              title={citation ? "Close viewer" : "Toggle Studio"}
+              disabled={!citation && !rightOpen}
+              aria-pressed={!!citation}
+            >
+              <PanelRight className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(sourcesOpen && "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary")}
+              onClick={() => setSourcesOpen((v) => !v)}
+              title="Toggle Sources (⌘B)"
+              aria-pressed={sourcesOpen}
+            >
+              <PanelLeft className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(focusMode && "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary")}
+              onClick={() => setFocusMode((v) => !v)}
+              title={focusMode ? "Exit Focus Mode (Esc)" : "Focus Mode (⌘⇧F)"}
+              aria-pressed={focusMode}
+            >
+              {focusMode ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            </Button>
+          </div>
+
           <UserButton />
         </div>
       </header>
@@ -449,6 +459,7 @@ export function NotebookClient() {
           focusMode={focusMode}
           onFocusModeChange={handleFocusModeChange}
           onTabSelect={handleTabSelect}
+          activeTab={activeTab}
         >
           <AddSourceDialog
             notebookId={notebook.id}

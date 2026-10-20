@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { PanelLeft, PanelRight, ChevronLeft, ChevronRight } from "lucide-react";
-import { StudioTabs, type StudioTabId } from "@/components/studio/StudioTabs";
+import { ChevronLeft, ChevronRight, GraduationCap, Headphones, Map, MessageSquare, PanelLeft, StickyNote } from "lucide-react";
+import type { StudioTabId } from "@/components/studio/StudioTabs";
 
 interface WorkspaceLayoutProps {
   sourcesPanel: React.ReactNode;
@@ -21,6 +21,36 @@ interface WorkspaceLayoutProps {
   onFocusModeChange: (focus: boolean) => void;
   children?: React.ReactNode;
   onTabSelect?: (tab: StudioTabId) => void;
+  /** Which studio tab is currently showing (used to highlight the mobile nav). */
+  activeTab?: StudioTabId | null;
+}
+
+const DESKTOP_QUERY = "(min-width: 1024px)";
+
+const TABS: { id: StudioTabId; label: string; icon: typeof Headphones }[] = [
+  { id: "audio", label: "Audio", icon: Headphones },
+  { id: "roadmap", label: "Roadmap", icon: Map },
+  { id: "study", label: "Study", icon: GraduationCap },
+  { id: "notes", label: "Notes", icon: StickyNote },
+];
+
+function NavButton({ icon: Icon, label, active, onClick }: { icon: typeof Headphones; label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "flex min-w-0 flex-col items-center justify-center gap-0.5 px-1 py-2 text-[10px] font-medium transition-colors",
+        active ? "text-primary" : "text-muted-foreground hover:text-foreground"
+      )}
+    >
+      <span className={cn("flex h-7 w-12 items-center justify-center rounded-full transition-colors", active && "bg-primary/15")}>
+        <Icon className="h-[18px] w-[18px]" />
+      </span>
+      <span className="max-w-full truncate">{label}</span>
+    </button>
+  );
 }
 
 export function WorkspaceLayout({
@@ -32,63 +62,65 @@ export function WorkspaceLayout({
   rightOpen,
   onRightOpenChange,
   rightPanelKind,
-  onRightPanelKindChange,
   focusMode,
-  onFocusModeChange,
   children,
   onTabSelect,
+  activeTab = null,
 }: WorkspaceLayoutProps) {
   const [isMobile, setIsMobile] = useState(false);
-  const [sourcesSheetOpen, setSourcesSheetOpen] = useState(false);
-  const [rightSheetOpen, setRightSheetOpen] = useState(false);
 
-  // Persist sources open/closed in localStorage (no hydration flash)
+  // Keep the latest callbacks in refs so effects don't re-run on every render.
+  const cbRef = useRef({ onSourcesOpenChange, onRightOpenChange });
+  useEffect(() => {
+    cbRef.current = { onSourcesOpenChange, onRightOpenChange };
+  });
+
+  // Restore the saved sources state on desktop only (a saved "open" must not pop a sheet on a phone).
   useEffect(() => {
     try {
+      if (!window.matchMedia(DESKTOP_QUERY).matches) return;
       const saved = localStorage.getItem("notebook-sources-open");
-      if (saved !== null) {
-        onSourcesOpenChange(JSON.parse(saved));
-      }
+      if (saved !== null) cbRef.current.onSourcesOpenChange(JSON.parse(saved));
     } catch {
       // ignore
     }
-  }, [onSourcesOpenChange]);
+  }, []);
 
+  // Persist only the desktop preference.
   useEffect(() => {
+    if (isMobile) return;
     try {
       localStorage.setItem("notebook-sources-open", JSON.stringify(sourcesOpen));
     } catch {
       // ignore
     }
-  }, [sourcesOpen]);
+  }, [sourcesOpen, isMobile]);
 
-  // Detect mobile viewport
+  // Track the breakpoint. When we first land on mobile, start with both sheets closed.
   useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 1024);
-    checkMobile();
-    window.addEventListener("resize", checkMobile);
-    return () => window.removeEventListener("resize", checkMobile);
+    const mq = window.matchMedia(DESKTOP_QUERY);
+    const apply = (initial: boolean) => {
+      const mobile = !mq.matches;
+      setIsMobile((prev) => {
+        if (mobile && (initial || !prev)) {
+          cbRef.current.onSourcesOpenChange(false);
+          cbRef.current.onRightOpenChange(false);
+        }
+        return mobile;
+      });
+    };
+    apply(true);
+    const onChange = () => apply(false);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
   }, []);
 
-  // Sync sheet states when mobile
-  useEffect(() => {
-    if (isMobile) {
-      setSourcesSheetOpen(sourcesOpen);
-      setRightSheetOpen(rightOpen);
-    }
-  }, [isMobile, sourcesOpen, rightOpen]);
-
-  // Handle escape key
+  // Keyboard shortcuts (desktop): Esc closes panels, Cmd/Ctrl+B toggles sources.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (isMobile) {
-          if (sourcesSheetOpen) setSourcesSheetOpen(false);
-          if (rightSheetOpen) setRightSheetOpen(false);
-        } else {
-          if (rightOpen) onRightOpenChange(false);
-          else if (sourcesOpen) onSourcesOpenChange(false);
-        }
+      if (e.key === "Escape" && !isMobile) {
+        if (rightOpen) onRightOpenChange(false);
+        else if (sourcesOpen) onSourcesOpenChange(false);
       }
       if ((e.metaKey || e.ctrlKey) && e.key === "b") {
         e.preventDefault();
@@ -97,127 +129,109 @@ export function WorkspaceLayout({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [sourcesOpen, rightOpen, isMobile, sourcesSheetOpen, rightSheetOpen, onSourcesOpenChange, onRightOpenChange]);
+  }, [sourcesOpen, rightOpen, isMobile, onSourcesOpenChange, onRightOpenChange]);
 
   const showSources = !focusMode && sourcesOpen;
   const showRight = !focusMode && rightOpen;
 
-  // Calculate grid template columns
-  // Sources: 260px or 0
-  // Chat: minmax(520px, 1fr)
-  // Right: viewer kind = 560px, tabs kind = 480px
-  const sourcesCol = !focusMode && showSources ? "260px" : "0";
-  const chatCol = "minmax(520px, 1fr)";
-  const rightColWidth =
-    rightPanelKind === "viewer"
-      ? "clamp(560px, 42vw, 720px)"
-      : "clamp(380px, 30vw, 480px)";
-  const rightCol = !focusMode && showRight ? rightColWidth : "0";
+  // Desktop grid: sources 260px | chat (min 520px) | right panel
+  const rightColWidth = rightPanelKind === "viewer" ? "clamp(560px, 42vw, 720px)" : "clamp(380px, 30vw, 480px)";
+  const cols = `${showSources ? "260px" : "0"} minmax(520px, 1fr) ${showRight ? rightColWidth : "0"}`;
 
   return (
-    <div
-      data-testid="workspace-layout"
-      className="flex h-full w-full flex-col min-h-0 overflow-hidden"
-    >
-      {/* Desktop Grid Layout */}
+    <div data-testid="workspace-layout" className="flex h-full min-h-0 w-full flex-col overflow-hidden">
+      {/* ONE layout for every screen size: a column on phones, a 3-column grid on desktop.
+          The chat panel is mounted exactly once. */}
       <div
-        className="hidden lg:grid lg:min-h-0 lg:flex-1 lg:overflow-hidden"
-        style={{
-          gridTemplateColumns: `${sourcesCol} ${chatCol} ${rightCol}`,
-        }}
+        className="flex min-h-0 flex-1 flex-col lg:grid lg:overflow-hidden lg:[grid-template-columns:var(--ws-cols)]"
+        style={{ "--ws-cols": cols } as React.CSSProperties}
       >
-        {/* Sources Rail */}
         <aside
           data-testid="sources-panel"
-          className={cn(
-            "min-w-0 overflow-hidden border-r border-border bg-card/40 transition-all duration-200 motion-reduce:transition-none",
-            showSources ? "flex flex-col" : "w-0 overflow-hidden"
-          )}
+          className="hidden min-h-0 min-w-0 flex-col overflow-hidden border-r border-border bg-card/40 transition-all duration-200 motion-reduce:transition-none lg:flex"
         >
-          {showSources && sourcesPanel}
+          {!isMobile && showSources && sourcesPanel}
         </aside>
 
-        {/* Chat Panel */}
-        <main className="min-w-0 overflow-hidden flex flex-col" data-testid="chat-column">
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" data-testid="chat-column">
           {chatPanel}
         </main>
 
-        {/* Right Panel */}
         <aside
           data-testid="right-panel"
-          className={cn(
-            "min-w-0 overflow-hidden border-l border-border bg-card/40 transition-all duration-200 motion-reduce:transition-none",
-            showRight ? "flex h-full min-h-0 flex-col" : "w-0 overflow-hidden",
-          )}
+          className="hidden min-h-0 min-w-0 flex-col overflow-hidden border-l border-border bg-card/40 transition-all duration-200 motion-reduce:transition-none lg:flex"
         >
-          {showRight && rightPanel}
+          {!isMobile && showRight && rightPanel}
         </aside>
       </div>
 
-      {/* Mobile: Tab bar at bottom */}
-      <div className="lg:hidden border-t border-border bg-card/80">
-        <div className="flex overflow-x-auto scrollbar-thin px-2 py-1.5 gap-1">
-          <Button
-            variant={sourcesOpen ? "default" : "outline"}
-            size="sm"
-            className="shrink-0 gap-1.5"
-            onClick={() => setSourcesSheetOpen(!sourcesSheetOpen)}
-            aria-pressed={sourcesOpen}
-          >
-            <PanelLeft className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Sources</span>
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="shrink-0 gap-1.5"
-            disabled
-          >
-            <span className="hidden sm:inline">Chat</span>
-          </Button>
-          <Button
-            variant={rightOpen ? "default" : "outline"}
-            size="sm"
-            className="shrink-0 gap-1.5"
-            onClick={() => setRightSheetOpen(!rightSheetOpen)}
-            aria-pressed={rightOpen}
-          >
-            <PanelRight className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Studio</span>
-          </Button>
-        </div>
-      </div>
+      {/* Mobile / tablet bottom navigation */}
+      {!focusMode && (
+        <nav
+          aria-label="Workspace sections"
+          className="shrink-0 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
+        >
+          <div className="grid grid-cols-6">
+            <NavButton icon={PanelLeft} label="Sources" active={sourcesOpen} onClick={() => onSourcesOpenChange(!sourcesOpen)} />
+            <NavButton
+              icon={MessageSquare}
+              label="Chat"
+              active={!sourcesOpen && !rightOpen}
+              onClick={() => {
+                onSourcesOpenChange(false);
+                onRightOpenChange(false);
+              }}
+            />
+            {TABS.map((t) => {
+              const active = rightOpen && activeTab === t.id;
+              return (
+                <NavButton
+                  key={t.id}
+                  icon={t.icon}
+                  label={t.label}
+                  active={active}
+                  onClick={() => {
+                    onSourcesOpenChange(false);
+                    if (active) onRightOpenChange(false);
+                    else onTabSelect?.(t.id);
+                  }}
+                />
+              );
+            })}
+          </div>
+        </nav>
+      )}
 
-      {/* Mobile Sheets */}
-      <Sheet open={sourcesSheetOpen} onOpenChange={setSourcesSheetOpen}>
-        <SheetContent side="left" className="h-full w-[85vw] max-w-[320px] p-0">
-          <div className="flex h-full w-full flex-col">
-            <div className="flex items-center justify-between border-b border-border p-3">
+      {/* Mobile sheets: controlled directly by the shared state, so they can never get out of sync */}
+      <Sheet open={isMobile && showSources} onOpenChange={onSourcesOpenChange}>
+        <SheetContent side="left" className="h-full w-[88vw] max-w-[340px] p-0">
+          <div className="flex h-full min-h-0 w-full flex-col">
+            <div className="flex shrink-0 items-center justify-between border-b border-border p-3">
               <span className="font-medium">Sources</span>
-              <Button variant="ghost" size="icon" onClick={() => setSourcesSheetOpen(false)}>
+              <Button variant="ghost" size="icon" onClick={() => onSourcesOpenChange(false)} aria-label="Close sources">
                 <ChevronLeft className="h-4 w-4" />
               </Button>
             </div>
-            <div className="flex-1 overflow-auto">{sourcesPanel}</div>
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{sourcesPanel}</div>
           </div>
         </SheetContent>
       </Sheet>
 
-      <Sheet open={rightSheetOpen} onOpenChange={setRightSheetOpen}>
-        <SheetContent side="right" className="h-full w-[90vw] max-w-[560px] p-0">
-          <div className="flex h-full w-full flex-col">
-            <div className="flex items-center justify-between border-b border-border p-3">
+      <Sheet open={isMobile && showRight} onOpenChange={onRightOpenChange}>
+        <SheetContent side="right" className="h-full w-full max-w-full p-0 sm:max-w-[560px]">
+          <div className="flex h-full min-h-0 w-full flex-col">
+            <div className="flex shrink-0 items-center justify-between border-b border-border p-3">
               <span className="font-medium">Studio</span>
-              <Button variant="ghost" size="icon" onClick={() => setRightSheetOpen(false)}>
+              <Button variant="ghost" size="icon" onClick={() => onRightOpenChange(false)} aria-label="Close studio">
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
-            <div className="flex-1 overflow-auto">{rightPanel}</div>
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{rightPanel}</div>
           </div>
         </SheetContent>
       </Sheet>
 
-      {/* Children (dialogs, command palette, etc) */}
+      {/* Dialogs, command palette, etc. */}
       {children}
     </div>
   );

@@ -20,6 +20,7 @@ import "@xyflow/react/dist/style.css";
 import { Minus, Plus, Scan, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useIsMobile } from "@/hooks/use-media-query";
 
 // ---------------------------------------------------------------------------
 // Mind map viewer
@@ -35,13 +36,32 @@ type MindMapEdge = { id: string; source: string; target: string };
 
 const MAX_DEPTH = 3; // levels 0..3 are kept; anything deeper is flattened into level 3
 const OPEN_DEPTH = 2; // nodes at this depth (and deeper) start collapsed
-const ROW_GAP = 66;
-const NODE_HEIGHT = 48;
-const COL_GAP = 330;
 
 const PALETTE = ["#FBBF24", "#2DD4BF", "#A78BFA", "#FB7185", "#38BDF8", "#A3E635", "#FB923C", "#F472B6"];
 const ROOT_GRADIENT = "linear-gradient(135deg,#FBBF24 0%,#FB7185 100%)";
-const widthFor = (level: number) => (level === 0 ? 270 : level === 1 ? 270 : level === 2 ? 235 : 215);
+
+/** Layout measurements that scale with the viewport so the map reads well on
+ *  narrow (mobile) screens without sacrificing the roomy desktop layout.          */
+type Dimensions = {
+  rowGap: number;
+  nodeHeight: number;
+  colGap: number;
+  nodeWidth: (level: number) => number;
+};
+
+const DESKTOP_DIMS: Dimensions = {
+  rowGap: 66,
+  nodeHeight: 48,
+  colGap: 330,
+  nodeWidth: (level) => (level === 0 ? 270 : level === 1 ? 270 : level === 2 ? 235 : 215),
+};
+
+const MOBILE_DIMS: Dimensions = {
+  rowGap: 44,
+  nodeHeight: 40,
+  colGap: 170,
+  nodeWidth: (level) => (level === 0 ? 210 : level === 1 ? 210 : level === 2 ? 180 : 155),
+};
 
 type TreeNode = { id: string; label: string; children: TreeNode[] };
 type Placement = {
@@ -129,15 +149,15 @@ function countLeaves(node: TreeNode, collapsed: Set<string>): number {
   return node.children.reduce((s, c) => s + countLeaves(c, collapsed), 0);
 }
 
-function computeLayout(root: TreeNode, collapsed: Set<string>): Map<string, Placement> {
+function computeLayout(root: TreeNode, collapsed: Set<string>, dims: Dimensions): Map<string, Placement> {
   const out = new Map<string, Placement>();
   out.set(root.id, {
     level: 0,
     branch: -1,
     parent: null,
     color: PALETTE[0]!,
-    x: -widthFor(0) / 2,
-    y: -NODE_HEIGHT / 2,
+    x: -dims.nodeWidth(0) / 2,
+    y: -dims.nodeHeight / 2,
     direction: 1,
   });
   if (collapsed.has(root.id) || root.children.length === 0) return out;
@@ -168,15 +188,15 @@ function computeLayout(root: TreeNode, collapsed: Set<string>): Map<string, Plac
   const ll = left.reduce((sum, b) => sum + countLeaves(b.node, collapsed), 0);
 
   const place = (node: TreeNode, depth: number, top: number, dir: 1 | -1, branch: number, parent: string): number => {
-    const height = countLeaves(node, collapsed) * ROW_GAP;
-    const cx = dir * depth * COL_GAP;
+    const height = countLeaves(node, collapsed) * dims.rowGap;
+    const cx = dir * depth * dims.colGap;
     out.set(node.id, {
       level: depth,
       branch,
       parent,
       color: PALETTE[branch % PALETTE.length]!,
-      x: cx - widthFor(depth) / 2,
-      y: top + height / 2 - NODE_HEIGHT / 2,
+      x: cx - dims.nodeWidth(depth) / 2,
+      y: top + height / 2 - dims.nodeHeight / 2,
       direction: dir,
     });
     if (!collapsed.has(node.id)) {
@@ -186,9 +206,9 @@ function computeLayout(root: TreeNode, collapsed: Set<string>): Map<string, Plac
     return height;
   };
 
-  let rc = (-rl * ROW_GAP) / 2;
+  let rc = (-rl * dims.rowGap) / 2;
   for (const b of right) rc += place(b.node, 1, rc, 1, b.idx, root.id);
-  let lc = (-ll * ROW_GAP) / 2;
+  let lc = (-ll * dims.rowGap) / 2;
   for (const b of left) lc += place(b.node, 1, lc, -1, b.idx, root.id);
   return out;
 }
@@ -208,10 +228,12 @@ function MindMapFlowNode({ id, data }: NodeProps) {
   const direction = data.direction === -1 ? -1 : 1;
   const isRoot = level === 0;
   const isBranch = level === 1;
+  const nodeWidth = (data.nodeWidth as (level: number) => number) ?? DESKTOP_DIMS.nodeWidth;
+  const nodeHeight = Number(data.nodeHeight ?? DESKTOP_DIMS.nodeHeight);
 
   const style: React.CSSProperties = {
-    width: widthFor(level),
-    minHeight: NODE_HEIGHT - 4,
+    width: nodeWidth(level),
+    minHeight: nodeHeight - 4,
     opacity: dim ? 0.2 : 1,
     transition: "opacity 160ms, box-shadow 160ms",
     color: isRoot || isBranch ? "#0B0F14" : color,
@@ -302,12 +324,6 @@ function MindMapFlowNode({ id, data }: NodeProps) {
 }
 
 const nodeTypes = { mindmap: MindMapFlowNode };
-// Bottom padding keeps the map clear of the minimap / zoom buttons in the bottom-right corner.
-const FIT = {
-  padding: { top: "28px", right: "28px", bottom: "128px", left: "28px" },
-  minZoom: 0.3,
-  maxZoom: 1.1,
-} as const;
 
 // ------------------------------- canvas ------------------------------------
 
@@ -317,6 +333,18 @@ function MindMapCanvas({ nodes, edges }: { nodes: MindMapNode[]; edges: MindMapE
     return base ? capDepth(liftSingleChains(base), 0) : null;
   }, [nodes, edges]);
   const index = useMemo(() => (tree ? indexTree(tree) : null), [tree]);
+
+  // Responsive layout: tighter spacing + narrower nodes on small viewports.
+  const isMobile = useIsMobile();
+  const dims = useMemo(() => (isMobile ? MOBILE_DIMS : DESKTOP_DIMS), [isMobile]);
+  const fitOptions = useMemo(
+    () => ({
+      padding: { top: 28, right: 28, bottom: isMobile ? 28 : 128, left: 28 },
+      minZoom: isMobile ? 0.2 : 0.3,
+      maxZoom: 1.1,
+    }),
+    [isMobile],
+  );
 
   const defaultCollapsed = useMemo(() => {
     const s = new Set<string>();
@@ -377,7 +405,7 @@ function MindMapCanvas({ nodes, edges }: { nodes: MindMapNode[]; edges: MindMapE
     return next;
   }, [baseCollapsed, matches, index]);
 
-  const placements = useMemo(() => (tree ? computeLayout(tree, collapsed) : new Map<string, Placement>()), [tree, collapsed]);
+  const placements = useMemo(() => (tree ? computeLayout(tree, collapsed, dims) : new Map<string, Placement>()), [tree, collapsed, dims]);
 
   const toggle = useCallback(
     (id: string) => {
@@ -389,7 +417,7 @@ function MindMapCanvas({ nodes, edges }: { nodes: MindMapNode[]; edges: MindMapE
         return { forTree: tree, ids: next };
       });
     },
-    [tree, defaultCollapsed]
+    [tree, defaultCollapsed],
   );
   const expandAll = useCallback(() => setOverride({ forTree: tree, ids: new Set() }), [tree]);
   const collapseAll = useCallback(() => {
@@ -422,8 +450,8 @@ function MindMapCanvas({ nodes, edges }: { nodes: MindMapNode[]; edges: MindMapE
         draggable: false,
         position: { x: p.x, y: p.y },
         // Controlled nodes carry no measured size; without these the MiniMap draws nothing.
-        initialWidth: widthFor(p.level),
-        initialHeight: NODE_HEIGHT,
+        initialWidth: dims.nodeWidth(p.level),
+        initialHeight: dims.nodeHeight,
         data: {
           label: n.label,
           level: p.level,
@@ -435,11 +463,13 @@ function MindMapCanvas({ nodes, edges }: { nodes: MindMapNode[]; edges: MindMapE
           dim: hovered !== null ? !activePath.has(id) : matches.size > 0 ? !matches.has(id) && !matchPath.has(id) : false,
           match: matches.has(id),
           onToggle: toggle,
+          nodeWidth: dims.nodeWidth,
+          nodeHeight: dims.nodeHeight,
         },
       });
     });
     return out;
-  }, [index, placements, collapsed, hovered, activePath, matches, matchPath, toggle]);
+  }, [index, placements, collapsed, hovered, activePath, matches, matchPath, toggle, dims]);
 
   // Edges come from the TREE (parent -> child), never from the raw LLM edges.
   const flowEdges: Edge[] = useMemo(() => {
@@ -469,7 +499,7 @@ function MindMapCanvas({ nodes, edges }: { nodes: MindMapNode[]; edges: MindMapE
     return out;
   }, [placements, hovered, activePath]);
 
-  const fitMap = useCallback(() => void fitView({ ...FIT, duration: 350 }), [fitView]);
+  const fitMap = useCallback(() => void fitView({ ...fitOptions, duration: 350 }), [fitView, fitOptions]);
 
   // Refit whenever the set of visible nodes changes (expand / collapse / search / new data).
   // Keyed on the node ids only; fitView is read through a ref so a changing function identity
@@ -477,9 +507,9 @@ function MindMapCanvas({ nodes, edges }: { nodes: MindMapNode[]; edges: MindMapE
   const layoutKey = flowNodes.map((n) => n.id).join("|");
   useEffect(() => {
     if (!layoutKey) return;
-    const t = window.setTimeout(() => void fitViewRef.current({ ...FIT, duration: 300 }), 120);
+    const t = window.setTimeout(() => void fitViewRef.current({ ...fitOptions, duration: 300 }), 120);
     return () => window.clearTimeout(t);
-  }, [layoutKey]);
+  }, [layoutKey, fitOptions]);
 
   const focusBranch = useCallback(
     (branch: number) => {
@@ -487,9 +517,9 @@ function MindMapCanvas({ nodes, edges }: { nodes: MindMapNode[]; edges: MindMapE
       placements.forEach((p, id) => {
         if (p.branch === branch) ids.push({ id });
       });
-      if (ids.length) void fitView({ nodes: ids, padding: 0.25, minZoom: 0.3, maxZoom: 1.1, duration: 450 });
+      if (ids.length) void fitView({ nodes: ids, padding: 0.25, minZoom: isMobile ? 0.2 : 0.3, maxZoom: 1.1, duration: 450 });
     },
-    [placements, fitView]
+    [placements, fitView, isMobile],
   );
 
   if (!tree || !index) {
@@ -516,14 +546,14 @@ function MindMapCanvas({ nodes, edges }: { nodes: MindMapNode[]; edges: MindMapE
             );
           })}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="relative">
             <Input
               type="text"
               placeholder="Search mind map..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="h-8 w-48 pl-9 text-sm"
+              className="h-8 w-full sm:w-52 pl-9 text-sm"
               aria-label="Search mind map"
             />
             <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -539,13 +569,13 @@ function MindMapCanvas({ nodes, edges }: { nodes: MindMapNode[]; edges: MindMapE
             )}
           </div>
           <Button size="sm" variant="outline" onClick={expandAll} aria-label="Expand all branches">
-            <Plus className="h-3.5 w-3.5" /> Expand all
+            <Plus className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Expand all</span>
           </Button>
           <Button size="sm" variant="outline" onClick={collapseAll} aria-label="Collapse all branches">
-            <Minus className="h-3.5 w-3.5" /> Collapse all
+            <Minus className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Collapse all</span>
           </Button>
           <Button size="sm" variant="outline" onClick={fitMap} aria-label="Fit view to mind map">
-            <Scan className="h-3.5 w-3.5" /> Fit view
+            <Scan className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Fit view</span>
           </Button>
         </div>
       </div>
@@ -557,7 +587,7 @@ function MindMapCanvas({ nodes, edges }: { nodes: MindMapNode[]; edges: MindMapE
           nodeTypes={nodeTypes}
           colorMode="dark"
           fitView
-          fitViewOptions={FIT}
+          fitViewOptions={fitOptions}
           minZoom={0.2}
           maxZoom={1.8}
           nodesDraggable={false}
@@ -584,7 +614,7 @@ function MindMapCanvas({ nodes, edges }: { nodes: MindMapNode[]; edges: MindMapE
             position="bottom-right"
             showFitView={false}
             showInteractive={false}
-            style={{ marginBottom: 112 }}
+            style={{ marginBottom: isMobile ? 16 : 112 }}
             className="!rounded-xl !border !border-border !bg-card [&>button]:!border-border [&>button]:!bg-card [&>button]:!text-foreground [&>button:hover]:!bg-muted"
           />
           <Panel position="bottom-left" className="pointer-events-none">
@@ -600,7 +630,7 @@ function MindMapCanvas({ nodes, edges }: { nodes: MindMapNode[]; edges: MindMapE
 
 export function MindMapViewer({ nodes, edges }: { nodes: MindMapNode[]; edges: MindMapEdge[] }) {
   return (
-    <div className="h-full min-h-[480px] w-full overflow-hidden rounded-2xl border border-border">
+    <div className="h-full min-h-[360px] sm:min-h-[480px] w-full overflow-hidden rounded-2xl border border-border">
       <ReactFlowProvider>
         <MindMapCanvas nodes={nodes} edges={edges} />
       </ReactFlowProvider>
