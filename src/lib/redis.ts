@@ -1,21 +1,30 @@
-import Redis from "ioredis";
+import Redis, { type RedisOptions } from "ioredis";
 import { serverEnv } from "@/lib/env";
 
+// Cache the Redis instance so serverless invocations reuse a single connection
+// per instance instead of opening a new socket on every cold start — which
+// defeats the singleton and can trigger "Stream isn't writeable" errors.
 const globalForRedis = globalThis as unknown as { redis?: Redis };
+
+const redisOptions: RedisOptions = {
+  maxRetriesPerRequest: 3,
+  connectTimeout: 4000,
+  commandTimeout: 4000,
+  retryStrategy: (times: number) => {
+    if (times > 3) return null;
+    return Math.min(times * 200, 2000);
+  },
+};
+
+// Some managed Redis providers (e.g. Upstash) only expose the TCP endpoint
+// over TLS. The URL scheme tells ioredis whether to encrypt the socket.
+if (serverEnv.redis.url.startsWith("rediss://")) {
+  redisOptions.tls = {};
+}
 
 export const redis =
   globalForRedis.redis ??
-  new Redis(serverEnv.redis.url, {
-    maxRetriesPerRequest: 3,
-    lazyConnect: true,
-    connectTimeout: 4000,
-    commandTimeout: 4000,
-    retryStrategy: (times) => {
-      if (times > 3) return null;
-      return Math.min(times * 200, 2000);
-    },
-    enableOfflineQueue: false,
-  });
+  new Redis(serverEnv.redis.url, redisOptions);
 
 // Handle connection errors gracefully to avoid unhandled rejections
 redis.on("error", (err) => {
@@ -23,7 +32,9 @@ redis.on("error", (err) => {
   console.warn("[redis] connection error:", err.message);
 });
 
-if (!serverEnv.isProduction) globalForRedis.redis = redis;
+// Cache the singleton so serverless invocations reuse a single connection
+// per instance instead of opening a new socket on every cold start.
+globalForRedis.redis = redis;
 
 /**
  * Redis is used as a fast, ephemeral status/progress layer so the UI can
@@ -44,8 +55,9 @@ const key = (sourceId: string) => `source:${sourceId}:progress`;
 export async function setProgress(sourceId: string, progress: IndexingProgress) {
   try {
     await redis.set(key(sourceId), JSON.stringify(progress), "EX", 60 * 30);
-  } catch {
+  } catch (err) {
     // Redis is a cache, not the source of truth — swallow and rely on Postgres.
+    console.warn("[redis] setProgress failed for source", sourceId, "-", err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -53,7 +65,8 @@ export async function getProgress(sourceId: string): Promise<IndexingProgress | 
   try {
     const raw = await redis.get(key(sourceId));
     return raw ? (JSON.parse(raw) as IndexingProgress) : null;
-  } catch {
+  } catch (err) {
+    console.warn("[redis] getProgress failed for source", sourceId, "-", err instanceof Error ? err.message : String(err));
     return null;
   }
 }

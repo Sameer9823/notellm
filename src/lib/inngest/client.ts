@@ -149,50 +149,65 @@ async function waitForAppRegistration(timeoutMs: number): Promise<DevServerState
 
 export async function safeSend<T extends InngestEvents>(event: T): Promise<boolean> {
    if (!serverEnv.isProduction) {
-    const now = Date.now();
-    if (now >= devServerKnownDownUntil) {
-      const state = await probeDevServer();
-      if (!state.reachable) {
-        // eslint-disable-next-line no-console
-        console.error(
-          `[inngest] local dev server at ${devServerOrigin} is not reachable; ` +
-            `not enqueuing "${event.name}". The \`dev\` script starts it automatically ` +
-            `via \`npx inngest-cli@latest dev\`; if you're running \`next dev\` directly, ` +
-            `start the dev server in a second terminal.`
-        );
-        return false;
-      }
-      if (!state.appRegistered) {
-        // The dev server is up but has not connected to this app yet, so it
-        // would accept the event and never run it. Wait for the registration
-        // instead of queueing a job that is guaranteed to time out.
-        const waited = await waitForAppRegistration(APP_REGISTRATION_TIMEOUT_MS);
-        if (!waited.appRegistered) {
-          // eslint-disable-next-line no-console
-          console.error(
-            `[inngest] dev server at ${devServerOrigin} is running but has not registered ` +
-              `the "${APP_ID}" app yet; not enqueuing "${event.name}". This normally takes ` +
-              `under a minute after \`npm run dev\` starts - try again in a moment.`
-          );
-          return false;
-        }
-      }
+     const now = Date.now();
+     if (now >= devServerKnownDownUntil) {
+       const state = await probeDevServer();
+       if (!state.reachable) {
+         // eslint-disable-next-line no-console
+         console.error(
+           `[inngest] local dev server at ${devServerOrigin} is not reachable; ` +
+             `not enqueuing "${event.name}". The \`dev\` script starts it automatically ` +
+             `via \`npx inngest-cli@latest dev\`; if you're running \`next dev\` directly, ` +
+             `start the dev server in a second terminal.`
+         );
+         return false;
+       }
+       if (!state.appRegistered) {
+         // The dev server is up but has not connected to this app yet, so it
+         // would accept the event and never run it. Wait for the registration
+         // instead of queueing a job that is guaranteed to time out.
+         const waited = await waitForAppRegistration(APP_REGISTRATION_TIMEOUT_MS);
+         if (!waited.appRegistered) {
+           // eslint-disable-next-line no-console
+           console.error(
+             `[inngest] dev server at ${devServerOrigin} is running but has not registered ` +
+               `the "${APP_ID}" app yet; not enqueuing "${event.name}". This normally takes ` +
+               `under a minute after \`npm run dev\` starts - try again in a moment.`
+           );
+           return false;
+         }
+       }
+     } else {
+       // eslint-disable-next-line no-console
+       console.error(
+         `[inngest] local dev server at ${devServerOrigin} was recently unreachable; ` +
+           `not enqueuing "${event.name}".`
+       );
+       return false;
+     }
     } else {
-      // eslint-disable-next-line no-console
-      console.error(
-        `[inngest] local dev server at ${devServerOrigin} was recently unreachable; ` +
-          `not enqueuing "${event.name}".`
-      );
-      return false;
-    }
-  }
+      // In production Inngest Cloud calls back into your app, which requires both
+      // keys. If either is missing `inngest.send` will reject at the HTTP layer
+      // and the event is silently dropped — check explicitly so the caller (and
+      // the operator's logs) can see the real reason a job never starts.
+     if (!serverEnv.inngest.eventKey || !serverEnv.inngest.signingKey) {
+       // eslint-disable-next-line no-console
+       console.error(
+         `[inngest] production enqueue skipped: INNGEST_EVENT_KEY and/or ` +
+           `INNGEST_SIGNING_KEY are not set. Configure them in the Inngest ` +
+           `dashboard and add them as Vercel project environment variables ` +
+           `before enqueuing "${event.name}".`
+       );
+       return false;
+     }
+   }
 
-  try {
-    await inngest.send(event);
-    return true;
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error(`[inngest] Failed to enqueue "${event.name}" event:`, err);
-    return false;
-  }
-}
+   try {
+     await inngest.send(event);
+     return true;
+   } catch (err) {
+     // eslint-disable-next-line no-console
+     console.error(`[inngest] Failed to enqueue "${event.name}" event:`, err);
+     return false;
+   }
+ }

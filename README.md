@@ -19,14 +19,14 @@ Live demo: https://notellm-two.vercel.app/
 
 | Concern            | Choice                                                       | Why                                                                                                                                                    |
 | ------------------ | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Framework          | Next.js 16 (App Router)                                      | Server components for data loading, route handlers for the API, `after()` for non-blocking background work — no separate backend service needed.       |
+| Framework          | Next.js 16 (App Router)                                      | Server components for data loading, route handlers for the API, Inngest for durable background jobs — no separate backend service needed. |
 | Auth               | Clerk                                                        | Notebook isolation is enforced by `ownerId`, sourced from Clerk's `userId`, at the data layer (every query filters by it), not just hidden in the UI.  |
 | Relational DB      | Neon Postgres + Prisma                                       | Source of truth for notebooks, sources, chunks (with citation metadata), chat history, notes, and generated audio/roadmap artifacts.                   |
 | Vector DB          | Qdrant                                                       | Stores chunk embeddings with `notebookId`/`sourceId` payload indexes so retrieval — and roadmap clustering — is always scoped to one notebook.          |
-| Cache / job status | Redis (ioredis)                                              | Fast, ephemeral progress layer (ingest, audio generation, roadmap generation) so the UI can poll without hammering Postgres; Postgres stays durable.     |
+| Cache / job status | Redis (ioredis)                                              | Fast, ephemeral progress layer (ingest, audio generation, roadmap generation) so the UI can poll without hammering Postgres; Postgres stays durable. Background jobs themselves run on Inngest, not Redis.     |
 | LLM / embeddings   | OpenAI (`gpt-4o-mini`, `text-embedding-3-small`)             | Configurable via env vars.                                                                                                                              |
 | Text-to-speech     | OpenAI TTS (`tts-1`)                                       | Two distinct voices synthesize the generated podcast-style script for the audio overview. `tts-1` renders a line in ~3.5s, so a full episode fits inside the 300s serverless function limit; `gpt-4o-mini-tts` sounds better but is 20x slower. |
-| Background jobs    | BullMQ (optional worker)                                     | Ingest/audio/roadmap pipelines run inline via `after()` by default; `src/worker` is a drop-in path to move them off the request lifecycle at scale.    |
+| Background jobs    | Inngest                                                      | Ingest/audio/roadmap pipelines are enqueued as durable Inngest events (`lib/inngest/functions.ts`) and run via `/api/inngest`; Inngest provides retries, step-level checkpointing, and survives restarts. |
 | UI                 | Tailwind + Radix primitives (shadcn pattern) + Framer Motion | Dark "ink" theme with an amber→teal status motif for indexing/generation progress.                                                                      |
 
 ---
@@ -79,9 +79,11 @@ src/
     credits.ts                         per-user metered-action credit budget (Postgres, row-locked)
     rate-limit.ts                      Redis-backed abuse guard
     db.ts / redis.ts / qdrant.ts / openai.ts   infra clients
-  worker/index.ts                      optional BullMQ worker for scaling ingestion off the request path
-```
-
+    inngest/
+      client.ts                        Inngest client + safeSend (dev-server registration-aware enqueue)
+      functions.ts                     source/created, audio/generate, roadmap/generate, artifact/generate
+  app/api/inngest/                     Inngest serve() endpoint (exempt from Clerk auth in proxy middleware)
+     
 ### Data model (`prisma/schema.prisma`)
 
 - **Notebook** — `ownerId` (Clerk user id) enforces isolation; every API route re-checks ownership
@@ -129,9 +131,17 @@ Progress is written to Redis at each stage (`lib/redis.ts::setProgress`) and pol
 via `useSourceStatus`, which drives the amber "indexing" pulse → teal "indexed" pop in the sources rail.
 Postgres is still the durable source of truth — Redis is a cache that self-heals on the next write.
 
-Indexing itself runs via Next's `after()` API so the upload request returns instantly and extraction/
-embedding happens after the response is sent, without needing a separate worker process for this scale.
-`src/worker/index.ts` shows the drop-in BullMQ path for scaling that off the request lifecycle entirely.
+Indexing itself runs as a durable Inngest job: `POST /api/notebooks/[id]/sources` and
+`POST /api/sources/[id]/reindex` create the `Source` row (status `QUEUED`) then enqueue a
+`source/created` event via `safeSend` (`lib/inngest/client.ts`). In local dev `npm run dev` starts both
+Next.js and `npx inngest-cli@latest dev` in the same terminal; if you run `next dev` directly, start the
+dev server in a second terminal so the event is actually executed instead of sitting in `QUEUED`. In
+production, set `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY` (from the Inngest dashboard) as Vercel
+project env vars; Inngest Cloud then POSTs back to `/api/inngest` (which the proxy middleware lets through
+unauthenticated via the `isInngest` matcher) to run each step. `safeSend` fails loudly and leaves the row
+`QUEUED`→`READY` instead of silently dropping the event if the dev server isn't synced or the keys are
+missing, and the status endpoint auto-marks any source that stays `QUEUED` > 2 minutes as `FAILED` with a
+retryable message (retry via the existing reindex route).
 
 ---
 
@@ -196,9 +206,11 @@ Generates a two-host, podcast-style summary of a notebook (or a single source):
    a distinct voice per speaker, then concatenates the result into a single audio file.
 4. **Persist** the script and audio to the `AudioOverview` row.
 
-Like ingestion and the roadmap pipeline, this runs via `after()` with live progress
+Like ingestion and the roadmap pipeline, this runs as a durable Inngest job (the
+`audio/generate` event enqueued by `POST /api/notebooks/[id]/audio`) with live progress
 (`SCRIPTING → SYNTHESIZING → READY`) polled through `useAudioStatus`, and is rendered in the
-`AudioOverviewPanel`.
+`AudioOverviewPanel`. The synthesis is bounded to a few-minute time budget so a full episode
+fits inside the 300s Serverless Function limit on Vercel Hobby.
 
 ---
 
@@ -248,8 +260,8 @@ manual setup needed beyond having a reachable Qdrant URL + key.
 | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | `DATABASE_URL`                                                                                | Neon Postgres connection string                                                  |
 | `QDRANT_URL`, `QDRANT_API_KEY`, `QDRANT_COLLECTION`                                           | Vector DB connection + collection name                                           |
-| `REDIS_URL`                                                                                   | Redis connection string (status cache; also used by the optional BullMQ worker)  |
-| `OPENAI_API_KEY`, `OPENAI_CHAT_MODEL`, `OPENAI_EMBEDDING_MODEL`                               | LLM + embedding config                                                           |
+| `REDIS_URL`                                                                                   | Redis connection string (status cache + rate limiting; **not** the job queue). Use the TCP `rediss://` form for TLS — do not use the Upstash REST `https://` URL.  |
+| `OPENAI_API_KEY`, `OPENAI_CHAT_MODEL`, `OPENAI_EMBEDDING_MODEL`                               | LLM + embedding config                                                         |
 | `OPENAI_TTS_MODEL`                                                                             | *(optional)* TTS model for audio overviews — defaults to `tts-1`               |
 | `OPENAI_REALTIME_MODEL`, `OPENAI_REALTIME_VOICE`                                              | *(voice mode)* OpenAI Realtime model + voice identifier                          |
 | `VOICE_TOKEN_SECRET`                                                                           | *(voice mode)* HMAC secret for signing tool tokens — generate with `openssl rand -base64 32` |
@@ -257,6 +269,8 @@ manual setup needed beyond having a reachable Qdrant URL + key.
 | `VOICE_CREDIT_COST_PER_BLOCK`, `VOICE_CREDIT_BLOCK_MINUTES`                                   | *(voice mode)* Credit cost + duration per voice block                           |
 | `CREDITS_MAX_PER_WINDOW`                                                                       | *(optional)* Credits per user per window — defaults to `200`                      |
 | `CREDITS_WINDOW_HOURS`                                                                         | *(optional)* Hours before the credit balance refreshes — defaults to `6`         |
+| `INNGEST_EVENT_KEY`                                                                            | **Production only.** Inngest event key (from the Inngest dashboard)              |
+| `INNGEST_SIGNING_KEY`                                                                          | **Production only.** Inngest signing key (from the Inngest dashboard)            |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`                                       | Clerk auth                                                                       |
 | `NEXT_PUBLIC_CLERK_SIGN_IN_URL` / `SIGN_UP_URL` / `AFTER_SIGN_IN_URL` / `AFTER_SIGN_UP_URL`   | Clerk redirect routing                                                           |
 | `NEXT_PUBLIC_APP_URL`                                                                          | Used for absolute links where needed (e.g. share links)                          |
@@ -265,10 +279,49 @@ manual setup needed beyond having a reachable Qdrant URL + key.
 ### Deployment
 
 Deploy the Next.js app to Vercel (or any Node host). Point `DATABASE_URL`/`QDRANT_URL`/`REDIS_URL` at
-managed services (Neon, Qdrant Cloud, Upstash) so the app is stateless and horizontally scalable. If
-ingestion (or audio/roadmap generation) volume grows past what request-scoped `after()` calls can
-comfortably absorb, switch the relevant route to enqueue into BullMQ and run `npm run worker` as a
-separate process/service — the underlying pipeline functions don't change either way.
+managed services (Neon, Qdrant Cloud, Upstash). Background jobs (source ingest, audio generation,
+roadmaps, artifacts) run on Inngest: set `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY` as Vercel
+project environment variables and make sure Inngest Cloud has synced your app (open `https://<your-domain>/api/inngest`
+in a browser — the response is the registered function list). There is no separate worker process to run
+for this scale; the Inngest serve endpoint dispatches each step back into your own API routes.
+
+### Troubleshooting: sources (or audio/roadmaps) stuck in QUEUED
+
+A source whose `status` never leaves `QUEUED` almost always means the Inngest event was enqueued but no
+worker ever ran it. Check the following, in order:
+
+1. **Local dev — is the Inngest dev server running?** `npm run dev` runs both Next.js and
+   `npx inngest-cli@latest dev` in one terminal. If you launched `next dev` directly, start the dev
+   server in a second terminal: `npx inngest-cli@latest dev`. `safeSend` (`lib/inngest/client.ts`)
+   probes `http://localhost:8288/dev` and fails loudly if the dev server is unreachable or hasn't
+   registered your app yet.
+2. **Is the app synced in Inngest Cloud (production)?** Open `https://<your-domain>/api/inngest` —
+   the JSON response lists your registered functions (`source/created`, `audio/generate`, etc.). In
+   the Inngest dashboard, go to **Apps → footnote** and confirm all four functions are registered. If
+   they're missing, click **Sync** / re-save your Inngest integration.
+3. **Missing signing/event keys.** Production enqueue of `source/created` requires
+   `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY` (both in the Inngest dashboard, both set as Vercel
+   project env vars). `safeSend` prints a clear `[inngest]` error to the Vercel logs if either is
+   unset instead of silently dropping the event.
+4. **Vercel Deployment Protection blocking `/api/inngest`.** Inngest Cloud must be able to POST back
+   to your deployed URL unauthenticated. The proxy middleware (`src/proxy.ts`, `isInngest` matcher)
+   exempts `/api/inngest*` from Clerk auth, but a Vercel password/Protection rule that gates *all*
+   traffic can still block Inngest's callback. Disable "Deployment Protection" for the production
+   deployment, or whitelist Inngest's callback IPs.
+5. **Redis URL is wrong.** `REDIS_URL` must be the TCP form (`redis://` or `rediss://` over TLS).
+   Upstash's default "REST URL" (`https://...`) is **not** accepted by ioredis — ioredest treats it as
+   a normal string and the connection silently fails, which makes progress polling fall back to Postgres
+   (slower, and the cache never warms). Get the "UPSTASH_REDIS_URL"-style TCP URL from the Upstash
+   console, or use `rediss://` for TLS. Redis failures are non-fatal (the app keeps working against
+   Postgres) but they are now logged via `console.warn("[redis] …")` in `lib/redis.ts`.
+6. **The job is genuinely stuck.** If a source sits `QUEUED` for more than 2 minutes, the status
+   endpoint (`GET /api/sources/[id]/status`) auto-marks it `FAILED` with
+   "Background worker did not pick up this job. Check Inngest setup, then retry via reindex".
+   Retry it with `POST /api/sources/[id]/reindex`, or delete and re-add the source.
+
+To test end-to-end locally: sign in, create a notebook, paste a plain-text source (type `TEXT`), and watch
+the sources rail go `UPLOADING → QUEUED → INDEXING → READY` within seconds. If it stalls at `QUEUED`,
+check terminal 2 (the Inngest dev server) for errors.
 
 ---
 
