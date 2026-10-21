@@ -35,11 +35,12 @@ export function AudioOverviewPanel({
   onClose: () => void;
   onSwitchTab?: (id: StudioTabId) => void;
 }) {
-  if (!open) return null;
   const { overview, step, percent, loading, startGeneration, deleteOverview } = useAudioStatus(notebookId, scopeSourceId);
   const [starting, setStarting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
+
+  if (!open) return null;
 
   const isWorking = overview && (overview.status === "QUEUED" || overview.status === "SCRIPTING" || overview.status === "SYNTHESIZING");
 

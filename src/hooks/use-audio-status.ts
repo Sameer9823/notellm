@@ -18,6 +18,11 @@ export function useAudioStatus(notebookId: string, sourceId?: string | null) {
   const [percent, setPercent] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const failureCount = useRef(0);
+
+  const POLL_INTERVAL_MS = 2000;
+  const RETRY_DELAY_MS = 3000;
+  const MAX_FAILURES = 5;
 
   const isTerminal = (s?: AudioOverviewDTO["status"]) => s === "READY" || s === "FAILED";
 
@@ -27,14 +32,22 @@ export function useAudioStatus(notebookId: string, sourceId?: string | null) {
     async (scheduleNext: boolean) => {
       try {
         const res = await fetch(`/api/notebooks/${notebookId}/audio${query}`, { cache: "no-store" });
-        if (res.ok) {
-          const data: StatusResponse = await res.json();
-          setOverview(data.overview);
-          setStep(data.progress?.step);
-          setPercent(data.progress?.percent ?? (data.overview?.status === "READY" ? 100 : 0));
-          if (scheduleNext && data.overview && !isTerminal(data.overview.status)) {
-            timer.current = setTimeout(() => poll(true), 2000);
-          }
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const data: StatusResponse = await res.json();
+        setOverview(data.overview);
+        setStep(data.progress?.step);
+        setPercent(data.progress?.percent ?? (data.overview?.status === "READY" ? 100 : 0));
+        failureCount.current = 0; // reset on success
+        if (scheduleNext && data.overview && !isTerminal(data.overview.status)) {
+          timer.current = setTimeout(() => poll(true), POLL_INTERVAL_MS);
+        }
+      } catch {
+        // Non-OK response or network error — retry instead of stopping forever.
+        failureCount.current++;
+        if (failureCount.current <= MAX_FAILURES) {
+          timer.current = setTimeout(() => poll(scheduleNext), RETRY_DELAY_MS);
         }
       } finally {
         setLoading(false);
@@ -48,6 +61,7 @@ export function useAudioStatus(notebookId: string, sourceId?: string | null) {
     setOverview(null);
     setStep(undefined);
     setPercent(0);
+    failureCount.current = 0;
     poll(true);
     return () => {
       if (timer.current) clearTimeout(timer.current);

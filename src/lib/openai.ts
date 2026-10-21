@@ -53,14 +53,20 @@ function logRetryErr(context: string, err: unknown) {
 
 export async function withRetry<T>(
   fn: () => Promise<T>,
-  { attempts = 3, baseDelayMs = 500 }: { attempts?: number; baseDelayMs?: number } = {}
+  { attempts = 3, baseDelayMs = 500, signal }: { attempts?: number; baseDelayMs?: number; signal?: AbortSignal } = {}
 ): Promise<T> {
   let lastErr: unknown;
   for (let i = 0; i < attempts; i++) {
+    if (signal?.aborted) {
+      throw signal.reason ?? new Error("Request aborted");
+    }
     try {
       return await fn();
     } catch (err) {
       lastErr = err;
+      if (signal?.aborted) {
+        throw signal.reason ?? new Error("Request aborted");
+      }
       const status = (err as { status?: number })?.status;
       const retriable = status === 429 || status === undefined || status >= 500;
       if (!retriable || i === attempts - 1) {
@@ -68,7 +74,14 @@ export async function withRetry<T>(
         throw err;
       }
       const delay = baseDelayMs * 2 ** i + Math.random() * 100;
-      await new Promise((r) => setTimeout(r, delay));
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => resolve(undefined), delay);
+        const onAbort = () => {
+          clearTimeout(timeout);
+          reject(signal?.reason ?? new Error("Request aborted"));
+        };
+        signal?.addEventListener("abort", onAbort, { once: true });
+      });
     }
   }
   throw lastErr;
@@ -154,23 +167,58 @@ export async function generateAudioScript(sourcesContext: string): Promise<Audio
 
 export async function synthesizeAudioScript(
   lines: AudioScriptLine[],
-  voices: { A: string; B: string }
+  voices: { A: string; B: string },
+  onProgress?: (done: number, total: number) => void
 ): Promise<Buffer> {
-  const buffers: Buffer[] = [];
-  for (const line of lines) {
-    const voice = line.speaker === "A" ? voices.A : voices.B;
-    const res = await withRetry(() =>
-      openai.audio.speech.create({
-        model: TTS_MODEL,
-        voice: voice as "alloy",
-        input: line.text,
-        response_format: "mp3",
-      })
-    );
-    const arrayBuffer = await res.arrayBuffer();
-    buffers.push(Buffer.from(arrayBuffer));
+  const CONCURRENCY = 4;
+  const total = lines.length;
+  if (total === 0) return Buffer.alloc(0);
+
+  const results: Buffer[] = new Array(total);
+  let nextIndex = 0;
+  let completed = 0;
+  let firstError: Error | null = null;
+  const controller = new AbortController();
+
+  async function worker(): Promise<void> {
+    while (!firstError && nextIndex < total) {
+      const idx = nextIndex++;
+      if (idx >= total) return;
+      const line = lines[idx];
+      const voice = line.speaker === "A" ? voices.A : voices.B;
+      try {
+        const res = await withRetry(
+          () =>
+            openai.audio.speech.create(
+              {
+                model: TTS_MODEL,
+                voice: voice as "alloy",
+                input: line.text.slice(0, 4000),
+                response_format: "mp3",
+              },
+              { signal: controller.signal }
+            ),
+          { signal: controller.signal }
+        );
+        const arrayBuffer = await res.arrayBuffer();
+        results[idx] = Buffer.from(arrayBuffer);
+        completed++;
+        onProgress?.(completed, total);
+      } catch (err) {
+        if (!firstError) {
+          controller.abort();
+        }
+        firstError = err instanceof Error ? err : new Error(String(err));
+        return;
+      }
+    }
   }
-  return Buffer.concat(buffers);
+
+  const workers = Array.from({ length: Math.min(CONCURRENCY, total) }, () => worker());
+  await Promise.all(workers);
+
+  if (firstError) throw firstError;
+  return Buffer.concat(results);
 }
 
 export async function detectLanguage(sample: string): Promise<string> {

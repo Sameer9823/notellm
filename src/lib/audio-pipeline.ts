@@ -11,6 +11,96 @@ function escapeAttr(s: string | undefined): string {
 }
 
 /**
+ * Turns an OpenAI / transport error into a user-facing message that points at
+ * the most likely fix (bad API key, out of credit, rate limit, wrong model,
+ * bad request, timeout, or network failure).
+ */
+export function friendlyAudioError(err: unknown): string {
+  const e = (err ?? {}) as {
+    status?: number | null;
+    code?: string | null;
+    type?: string | null;
+    message?: string;
+    name?: string;
+    cause?: unknown;
+  };
+  const status = e.status ?? undefined;
+  const code = e.code ?? undefined;
+  const type = e.type ?? undefined;
+  const msg = e.message ?? "";
+  const msgLower = msg.toLowerCase();
+
+  // Unwrap Node / undici system error codes from the cause chain.
+  let causeCode: string | undefined;
+  let causeMsg = "";
+  const cause = e.cause;
+  if (cause instanceof Error) {
+    causeMsg = cause.message;
+    const c = cause as { code?: unknown };
+    if (typeof c.code === "string") causeCode = c.code;
+  }
+
+  const codeStr = typeof code === "string" ? code.toLowerCase() : undefined;
+  const typeStr = typeof type === "string" ? type.toLowerCase() : undefined;
+  const causeMsgLower = causeMsg.toLowerCase();
+
+  // 401 — bad / missing API key
+  if (status === 401) {
+    return "The OpenAI API key is invalid or not set. Check your OPENAI_API_KEY.";
+  }
+
+  // 429 with insufficient_quota → out of credit (billing)
+  if (status === 429 && (codeStr === "insufficient_quota" || typeStr === "insufficient_quota")) {
+    return "Your OpenAI account is out of credit. Add funds at platform.openai.com/account/billing and try again.";
+  }
+
+  // 429 → rate limit
+  if (status === 429) {
+    return "OpenAI is rate-limiting requests. Wait a moment and try again, or lower your usage.";
+  }
+
+  // 404 / model_not_found
+  if (status === 404 || codeStr === "model_not_found") {
+    return `The configured model was not found. Check OPENAI_CHAT_MODEL and OPENAI_TTS_MODEL.`;
+  }
+
+  // 400 / 422 — request rejected
+  if (status === 400 || status === 422) {
+    return `OpenAI rejected the request (${status}): ${msg}.`;
+  }
+
+  // Timeouts (OpenAI APIConnectionTimeoutError, abort timeouts, ETIMEDOUT cause)
+  const isTimeout =
+    typeStr?.includes("timeout") ||
+    causeCode === "ETIMEDOUT" ||
+    msgLower.includes("timed out") ||
+    msgLower.includes("timeout") ||
+    causeMsgLower.includes("timed out") ||
+    causeMsgLower.includes("timeout");
+  if (isTimeout) {
+    return "The request to OpenAI timed out. Try again later.";
+  }
+
+  // Network errors: no HTTP status (transport-level failure)
+  const isNetwork =
+    status === undefined &&
+    (causeCode === "ECONNRESET" ||
+      causeCode === "ENOTFOUND" ||
+      causeCode === "ECONNREFUSED" ||
+      causeCode === "EAI_AGAIN" ||
+      causeCode === "EHOSTUNREACH" ||
+      causeCode === "ENETUNREACH" ||
+      msgLower.includes("fetch failed") ||
+      msgLower.includes("network") ||
+      msgLower.includes("connect"));
+  if (isNetwork) {
+    return "Could not reach OpenAI. Check your network connection and OPENAI_BASE_URL.";
+  }
+
+  return msg || "Audio generation failed";
+}
+
+/**
  * Runs the full audio-overview pipeline for a notebook: assemble context
  * from ready sources -> generate a two-host dialogue script -> synthesize
  * each line with a distinct voice -> concatenate -> persist.
@@ -65,7 +155,19 @@ export async function runAudioPipeline(audioId: string) {
     await db.audioOverview.update({ where: { id: overview.id }, data: { script: lines } });
 
     await mark(overview.id, "SYNTHESIZING", `Recording ${lines.length} lines`, 45);
-    const audioData = await synthesizeAudioScript(lines, { A: overview.voiceA, B: overview.voiceB });
+    const audioData = await synthesizeAudioScript(
+      lines,
+      { A: overview.voiceA, B: overview.voiceB },
+      (done, total) => {
+        const percent = 45 + Math.round((done / total) * (88 - 45));
+        void setAudioProgress(overview.id, {
+          status: "SYNTHESIZING",
+          step: `Recording line ${done} of ${total}`,
+          percent,
+          updatedAt: Date.now(),
+        });
+      }
+    );
 
     // Rough duration estimate: ~150 words/minute spoken, used for display
     // only (not exact — swap for real MP3 duration parsing if needed).
@@ -108,7 +210,7 @@ export async function runAudioPipeline(audioId: string) {
     });
     await setAudioProgress(overview.id, { status: "READY", percent: 100, updatedAt: Date.now() });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Audio generation failed";
+    const message = friendlyAudioError(err);
     // eslint-disable-next-line no-console
     console.error(`[audio] overview ${overview.id} (notebook ${overview.notebookId}) failed:`, describeError(err));
     await db.audioOverview.update({

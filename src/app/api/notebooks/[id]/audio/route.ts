@@ -46,28 +46,64 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       script: true,
       durationSec: true,
       createdAt: true,
+      updatedAt: true,
       sourceId: true,
       sourceTitle: true,
-      audioData: true, // only used to compute a boolean below, not sent to client
       audioUrl: true,
     },
   });
 
   if (!overview) return NextResponse.json({ overview: null });
 
+  const now = Date.now();
+  let currentStatus = overview.status;
+  let currentError = overview.errorMessage;
+
+  // Stuck job detection: mark an overview FAILED if it sat in QUEUED for more
+  // than 6 minutes (Inngest worker never picked it up) or in SCRIPTING /
+  // SYNTHESIZING for more than 20 minutes (timed out).
+  if (overview.updatedAt) {
+    const updatedMs =
+      overview.updatedAt instanceof Date ? overview.updatedAt.getTime() : new Date(overview.updatedAt).getTime();
+    const ageMs = now - updatedMs;
+
+    if (overview.status === "QUEUED" && ageMs > 6 * 60 * 1000) {
+      currentError = "The background worker (Inngest) didn't pick it up - make sure it is running";
+    } else if (
+      (overview.status === "SCRIPTING" || overview.status === "SYNTHESIZING") &&
+      ageMs > 20 * 60 * 1000
+    ) {
+      currentError = "Audio generation timed out";
+    }
+
+    if (currentError && currentStatus !== "FAILED") {
+      await db.audioOverview.update({
+        where: { id: overview.id },
+        data: { status: "FAILED", errorMessage: currentError },
+      });
+      await setAudioProgress(overview.id, {
+        status: "FAILED",
+        errorMessage: currentError,
+        percent: 0,
+        updatedAt: now,
+      });
+      currentStatus = "FAILED";
+    }
+  }
+
   const progress = await getAudioProgress(overview.id);
 
   return NextResponse.json({
     overview: {
       id: overview.id,
-      status: overview.status,
-      errorMessage: overview.errorMessage,
+      status: currentStatus,
+      errorMessage: currentError,
       script: overview.script,
       durationSec: overview.durationSec,
       createdAt: overview.createdAt,
       sourceId: overview.sourceId,
       sourceTitle: overview.sourceTitle,
-      hasAudio: overview.audioData != null || overview.audioUrl != null,
+      hasAudio: currentStatus === "READY",
     },
     progress,
   });

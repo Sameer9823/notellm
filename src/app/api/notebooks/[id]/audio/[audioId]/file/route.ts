@@ -29,12 +29,74 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "Audio not found" }, { status: 404 });
   }
 
+  const total = overview.audioData.length;
+
+  // Support HTTP Range requests so Safari / iOS can seek and resume playback.
+  // Handles `bytes=a-b`, `bytes=a-`, and `bytes=-n`.
+  const rangeHeader = _req.headers.get("range");
+  if (rangeHeader) {
+    const match = rangeHeader.match(/^bytes=(\d*)-(\d*)$/);
+    if (match) {
+      const startStr = match[1];
+      const endStr = match[2];
+
+      let rangeStart: number;
+      let rangeEnd: number;
+
+      if (startStr === "") {
+        // `bytes=-n` — last n bytes
+        const n = endStr ? parseInt(endStr, 10) : 0;
+        if (!endStr || Number.isNaN(n) || n <= 0) {
+          return new NextResponse(null, {
+            status: 416,
+            headers: {
+              "Content-Range": `bytes */${total}`,
+              "Accept-Ranges": "bytes",
+            },
+          });
+        }
+        rangeStart = Math.max(0, total - n);
+        rangeEnd = total - 1;
+      } else {
+        // `bytes=a-` or `bytes=a-b`
+        const start = startStr ? parseInt(startStr, 10) : 0;
+        if (!startStr || Number.isNaN(start) || start < 0 || start >= total) {
+          return new NextResponse(null, {
+            status: 416,
+            headers: {
+              "Content-Range": `bytes */${total}`,
+              "Accept-Ranges": "bytes",
+            },
+          });
+        }
+        rangeStart = start;
+        rangeEnd = endStr && !Number.isNaN(parseInt(endStr, 10)) ? parseInt(endStr, 10) : total - 1;
+      }
+
+      rangeEnd = Math.min(rangeEnd, total - 1);
+      const content = new Uint8Array(overview.audioData.subarray(rangeStart, rangeEnd + 1));
+
+      return new NextResponse(content, {
+        status: 206,
+        headers: {
+          "Content-Type": "audio/mpeg",
+          "Content-Disposition": `inline; filename="audio-overview-${audioId}.mp3"`,
+          "Content-Range": `bytes ${rangeStart}-${rangeEnd}/${total}`,
+          "Content-Length": String(rangeEnd - rangeStart + 1),
+          "Accept-Ranges": "bytes",
+          "Cache-Control": "private, max-age=31536000, immutable",
+        },
+      });
+    }
+  }
+
   return new NextResponse(new Uint8Array(overview.audioData), {
     headers: {
       "Content-Type": "audio/mpeg",
       "Content-Disposition": `inline; filename="audio-overview-${audioId}.mp3"`,
-      "Cache-Control": "private, max-age=31536000, immutable",
       "Content-Length": String(overview.audioData.length),
+      "Accept-Ranges": "bytes",
+      "Cache-Control": "private, max-age=31536000, immutable",
     },
   });
 }

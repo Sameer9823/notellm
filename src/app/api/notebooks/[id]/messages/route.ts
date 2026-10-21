@@ -10,7 +10,7 @@ const querySchema = z.object({
     .transform((s) => (s === "all" ? null : s))
     .optional()
     .nullable(),
-  cursor: z.string().datetime().optional(),
+   cursor: z.string().datetime().optional().nullable(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
