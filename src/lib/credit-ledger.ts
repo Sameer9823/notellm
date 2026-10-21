@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { db, withTransaction } from "@/lib/db";
 import { Prisma } from "@prisma/client";
 import type { CreditTransactionType } from "@prisma/client";
 
@@ -29,7 +29,7 @@ export async function grantCredits(params: {
   metadata?: Record<string, unknown>;
 }) {
   const { userId, amount, type, description, metadata } = params;
-  return db.$transaction(async (tx) => {
+  return withTransaction(async (tx) => {
     const last = await tx.creditTransaction.findFirst({
       where: { userId },
       orderBy: { createdAt: "desc" },
@@ -57,7 +57,7 @@ export async function spendPurchasedCredits(
   amount: number,
   description: string
 ) {
-  return db.$transaction(async (tx) => {
+  return withTransaction(async (tx) => {
     const last = await tx.creditTransaction.findFirst({
       where: { userId },
       orderBy: { createdAt: "desc" },

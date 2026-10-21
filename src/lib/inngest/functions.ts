@@ -16,7 +16,17 @@ import { runRoadmapPipeline } from "@/lib/roadmap-pipeline";
  */
 
 export const processSource = inngest.createFunction(
-  { id: "process-source", retries: 3 },
+  {
+    id: "process-source",
+    retries: 3,
+    // Ingesting a large PDF means extracting hundreds of pages, embedding
+    // every chunk (batched OpenAI calls), upserting them into Qdrant and
+    // finally swapping the chunk rows in Postgres — a transaction that
+    // alone takes ~10s for a few hundred chunks. Without an explicit
+    // finish timeout the job can be cut off by Inngest's default partway
+    // through, leaving the source stuck in INDEXING.
+    timeouts: { finish: "15m" },
+  },
   { event: "source/created" },
   async ({ event, step }) => {
     const { sourceId } = event.data as SourceCreatedEvent["data"];

@@ -36,6 +36,26 @@ export const CHAT_MODEL = serverEnv.openai.chatModel;
 export const EMBEDDING_MODEL = serverEnv.openai.embeddingModel;
 export const TTS_MODEL = serverEnv.openai.ttsModel;
 
+/**
+ * Per-request timeouts for the audio pipeline.
+ *
+ * The shared client is created with a 30s timeout, which is plenty for
+ * embeddings and short chat calls but far too short for the two calls the
+ * podcast pipeline makes:
+ *
+ *  - `gpt-4o-mini-tts` takes 30-125s to produce its first byte for a typical
+ *    dialogue line (measured against the live API).
+ *  - The script call sends ~14k chars of source context and asks for a
+ *    2k-token JSON script, which regularly runs past 30s.
+ *
+ * The OpenAI SDK's timeout only covers time-to-first-byte (it is cleared as
+ * soon as `fetch` resolves, before the body is streamed), so a too-small value
+ * aborts requests that would otherwise have succeeded — and `withRetry` then
+ * burns up to 3x that budget per line, which is what pushed a full podcast
+ * past the Inngest function's finish timeout.
+ */
+export const AUDIO_REQUEST_TIMEOUT_MS = 120_000;
+
 function escapeAttr(s: string | undefined): string {
   return (s ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 }
@@ -75,11 +95,18 @@ export async function withRetry<T>(
       }
       const delay = baseDelayMs * 2 ** i + Math.random() * 100;
       await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => resolve(undefined), delay);
+        // The abort listener must be detached when the backoff finishes
+        // normally — otherwise every retry leaves a listener behind on the
+        // shared AbortController (one per TTS line), which trips Node's
+        // max-listeners warning and keeps stale listeners alive.
         const onAbort = () => {
           clearTimeout(timeout);
           reject(signal?.reason ?? new Error("Request aborted"));
         };
+        const timeout = setTimeout(() => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve(undefined);
+        }, delay);
         signal?.addEventListener("abort", onAbort, { once: true });
       });
     }
@@ -138,16 +165,19 @@ Rules:
 
 export async function generateAudioScript(sourcesContext: string): Promise<AudioScriptLine[]> {
   const res = await withRetry(() =>
-    openai.chat.completions.create({
-      model: CHAT_MODEL,
-      temperature: 0.6,
-      response_format: { type: "json_object" },
-      max_tokens: 2048,
-      messages: [
-        { role: "system", content: SCRIPT_SYSTEM_PROMPT },
-        { role: "user", content: `Source material for this notebook:\n\n${sourcesContext}` },
-      ],
-    })
+    openai.chat.completions.create(
+      {
+        model: CHAT_MODEL,
+        temperature: 0.6,
+        response_format: { type: "json_object" },
+        max_tokens: 2048,
+        messages: [
+          { role: "system", content: SCRIPT_SYSTEM_PROMPT },
+          { role: "user", content: `Source material for this notebook:\n\n${sourcesContext}` },
+        ],
+      },
+      { timeout: AUDIO_REQUEST_TIMEOUT_MS }
+    )
   );
 
   const raw = res.choices[0]?.message?.content ?? "{}";
@@ -170,7 +200,11 @@ export async function synthesizeAudioScript(
   voices: { A: string; B: string },
   onProgress?: (done: number, total: number) => void
 ): Promise<Buffer> {
-  const CONCURRENCY = 4;
+  // A typical 10-18 exchange script is ~23 lines and each line costs 30-125s
+  // of synthesis, so a low concurrency makes the whole job run for many
+  // minutes. 6 keeps the wall-clock near 3 batches while staying well inside
+  // OpenAI's TTS rate limits (429s are retried by withRetry).
+  const CONCURRENCY = 6;
   const total = lines.length;
   if (total === 0) return Buffer.alloc(0);
 
@@ -196,7 +230,7 @@ export async function synthesizeAudioScript(
                 input: line.text.slice(0, 4000),
                 response_format: "mp3",
               },
-              { signal: controller.signal }
+              { timeout: AUDIO_REQUEST_TIMEOUT_MS, signal: controller.signal }
             ),
           { signal: controller.signal }
         );

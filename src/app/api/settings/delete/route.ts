@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { db } from "@/lib/db";
+import { withTransaction } from "@/lib/db";
 
 const bodySchema = z.object({
   confirm: z.literal("DELETE ALL MY DATA"),
@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
 }
 
 async function deleteUserData(userId: string): Promise<void> {
-  await db.$transaction(async (tx) => {
+  await withTransaction(async (tx) => {
     await tx.reviewLog.deleteMany({ where: { userId } });
     await tx.reviewCard.deleteMany({ where: { userId } });
     await tx.userMemory.deleteMany({ where: { userId } });

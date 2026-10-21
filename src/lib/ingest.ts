@@ -1,5 +1,5 @@
 import { v4 as uuid } from "uuid";
-import { db } from "@/lib/db";
+import { db, withDbRetry, withTransaction } from "@/lib/db";
 import { setProgress } from "@/lib/redis";
 import { embedTexts, detectLanguage, translateCuesToEnglish } from "@/lib/openai";
 import { upsertChunks, deleteBySourceExcept } from "@/lib/qdrant";
@@ -101,25 +101,35 @@ export async function runIngestPipeline(sourceId: string) {
 
     // Swap the Postgres chunk rows atomically — if createMany rolls back,
     // the old rows still match the old Qdrant vectors.
-    await db.$transaction(async (tx) => {
-      await tx.chunk.deleteMany({ where: { sourceId: source.id } });
-      await tx.chunk.createMany({
-        data: chunkRows.map((r) => ({
-          id: r.id,
-          sourceId: source.id,
-          notebookId: source.notebookId,
-          index: r.chunk.index,
-          content: r.chunk.content,
-          tokenCount: r.chunk.tokenCount,
-          startChar: r.chunk.startChar,
-          endChar: r.chunk.endChar,
-          page: r.chunk.page,
-          startSec: r.chunk.startSec,
-          endSec: r.chunk.endSec,
-          vectorId: r.id,
-        })),
-      });
-    });
+    //
+    // A PDF can produce several hundred chunks, and deleting + re-inserting
+    // all of them in one transaction takes ~10s once the query has to cross
+    // the Neon pooler, so give this one a much larger budget than the rest.
+    // The swap is a full replace, so a rolled-back attempt is safe to retry.
+    await withDbRetry(() =>
+      withTransaction(
+        async (tx) => {
+          await tx.chunk.deleteMany({ where: { sourceId: source.id } });
+          await tx.chunk.createMany({
+            data: chunkRows.map((r) => ({
+              id: r.id,
+              sourceId: source.id,
+              notebookId: source.notebookId,
+              index: r.chunk.index,
+              content: r.chunk.content,
+              tokenCount: r.chunk.tokenCount,
+              startChar: r.chunk.startChar,
+              endChar: r.chunk.endChar,
+              page: r.chunk.page,
+              startSec: r.chunk.startSec,
+              endSec: r.chunk.endSec,
+              vectorId: r.id,
+            })),
+          });
+        },
+        { timeout: 120_000 }
+      )
+    );
 
     // Only after Postgres is swapped do we remove the old Qdrant points,
     // preserving the freshly-upserted new ids so they don't get deleted.

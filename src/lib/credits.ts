@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { db, withTransaction } from "@/lib/db";
 import { Prisma } from "@prisma/client";
 import { serverEnv } from "@/lib/env";
 
@@ -110,7 +110,7 @@ export async function consumeCredits(
 ): Promise<{ allowed: true; status: CreditStatus } | { allowed: false; status: CreditStatus }> {
   const now = new Date();
 
-  return db.$transaction(async (tx) => {
+  return withTransaction(async (tx) => {
     // Row lock so two concurrent requests from the same user can't both
     // read the same balance and both be let through past zero.
     const rows = await tx.$queryRaw<{ balance: number; windowStart: Date }[]>`
@@ -194,7 +194,7 @@ export async function consumeCredits(
 export async function refundCredits(userId: string, amount: number): Promise<void> {
   const now = new Date();
 
-  await db.$transaction(async (tx) => {
+  await withTransaction(async (tx) => {
     const rows = await tx.$queryRaw<{ balance: number; windowStart: Date }[]>`
       SELECT "balance", "windowStart" FROM "UserCredits" WHERE "userId" = ${userId} FOR UPDATE
     `;

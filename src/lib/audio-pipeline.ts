@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { db, withDbRetry } from "@/lib/db";
 import { setAudioProgress } from "@/lib/redis";
 import { generateAudioScript, synthesizeAudioScript } from "@/lib/openai";
 import { describeError } from "@/lib/utils";
@@ -110,8 +110,11 @@ export function friendlyAudioError(err: unknown): string {
  * the source ingest pipeline.
  */
 export async function runAudioPipeline(audioId: string) {
-  const overview = await db.audioOverview.findUnique({ where: { id: audioId } });
+  const overview = await withDbRetry(() => db.audioOverview.findUnique({ where: { id: audioId } }));
   if (!overview) return;
+
+  // Throttled "still working" signal written to the row while TTS runs.
+  const lastHeartbeatAt = { current: 0 };
 
   try {
     await mark(overview.id, "SCRIPTING", "Reading through your sources", 10);
@@ -152,7 +155,7 @@ export async function runAudioPipeline(audioId: string) {
     await mark(overview.id, "SCRIPTING", "Writing the podcast script", 25);
     const lines = await generateAudioScript(context);
 
-    await db.audioOverview.update({ where: { id: overview.id }, data: { script: lines } });
+    await withDbRetry(() => db.audioOverview.update({ where: { id: overview.id }, data: { script: lines } }));
 
     await mark(overview.id, "SYNTHESIZING", `Recording ${lines.length} lines`, 45);
     const audioData = await synthesizeAudioScript(
@@ -166,6 +169,17 @@ export async function runAudioPipeline(audioId: string) {
           percent,
           updatedAt: Date.now(),
         });
+        // Also touch the row so the "is this job still alive?" check sees
+        // recent activity even when Redis is unavailable. Throttled to at
+        // most one write every 30s — TTS lines take 30-125s each, so this
+        // fires roughly once per line.
+        const now = Date.now();
+        if (now - lastHeartbeatAt.current > 30_000) {
+          lastHeartbeatAt.current = now;
+          void withDbRetry(() =>
+            db.audioOverview.update({ where: { id: overview.id }, data: { updatedAt: new Date() } })
+          ).catch(() => {});
+        }
       }
     );
 
@@ -192,36 +206,55 @@ export async function runAudioPipeline(audioId: string) {
         audioUrl = uploaded.url;
         audioPublicId = uploaded.publicId;
       } catch (err) {
+        // The MP3 still ends up in Postgres below, so playback is unaffected —
+        // but the reason belongs in the log, because the usual cause is a
+        // Cloudinary API key that lacks the "upload" permission, which
+        // otherwise looks like a mysterious silent downgrade.
         // eslint-disable-next-line no-console
-        console.warn(`[audio] Cloudinary upload failed for overview ${overview.id}, falling back to inline storage:`, err);
+        console.warn(
+          `[audio] Cloudinary upload failed for overview ${overview.id}, falling back to inline storage. ` +
+            `Check that the Cloudinary API key has upload permissions. Cause: ${describeError(err)}`
+        );
       }
     }
 
-    await db.audioOverview.update({
-      where: { id: overview.id },
-      data: {
-        status: "READY",
-        audioData: audioUrl ? null : audioData,
-        audioUrl,
-        audioPublicId,
-        durationSec,
-        errorMessage: null,
-      },
-    });
+    // The most important write in the whole pipeline: it is what makes the
+    // finished audio visible. A transient database blip here would throw away
+    // minutes of synthesis, so retry it.
+    await withDbRetry(() =>
+      db.audioOverview.update({
+        where: { id: overview.id },
+        data: {
+          status: "READY",
+          audioData: audioUrl ? null : audioData,
+          audioUrl,
+          audioPublicId,
+          durationSec,
+          errorMessage: null,
+        },
+      })
+    );
     await setAudioProgress(overview.id, { status: "READY", percent: 100, updatedAt: Date.now() });
   } catch (err) {
     const message = friendlyAudioError(err);
     // eslint-disable-next-line no-console
     console.error(`[audio] overview ${overview.id} (notebook ${overview.notebookId}) failed:`, describeError(err));
-    await db.audioOverview.update({
-      where: { id: overview.id },
-      data: { status: "FAILED", errorMessage: message },
+    // Never let a failure while recording the failure escape — it would
+    // reject the Inngest function and leave the row in a stale state.
+    await withDbRetry(() =>
+      db.audioOverview.update({
+        where: { id: overview.id },
+        data: { status: "FAILED", errorMessage: message },
+      })
+    ).catch((e) => {
+      // eslint-disable-next-line no-console
+      console.error(`[audio] could not mark overview ${overview.id} as FAILED:`, describeError(e));
     });
     await setAudioProgress(overview.id, { status: "FAILED", errorMessage: message, updatedAt: Date.now() });
   }
 }
 
 async function mark(audioId: string, status: "SCRIPTING" | "SYNTHESIZING", step: string, percent: number) {
-  await db.audioOverview.update({ where: { id: audioId }, data: { status } });
+  await withDbRetry(() => db.audioOverview.update({ where: { id: audioId }, data: { status } }));
   await setAudioProgress(audioId, { status, step, percent, updatedAt: Date.now() });
 }

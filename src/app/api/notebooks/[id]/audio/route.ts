@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { db } from "@/lib/db";
+import { db, withDbRetry } from "@/lib/db";
 import { getAudioProgress, setAudioProgress } from "@/lib/redis";
 import { safeSend } from "@/lib/inngest/client";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
@@ -10,6 +10,13 @@ import { z } from "zod";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
+
+// Stuck-job thresholds. A podcast is ~23 TTS lines at 30-125s each, so a
+// synthesis pass legitimately runs for 5-15 minutes — these cutoffs only
+// trigger when the job has also stopped reporting progress.
+const QUEUED_STALE_MS = 15 * 60 * 1000; // never picked up by the worker
+const SYNTHESIZING_STALE_MS = 45 * 60 * 1000; // started but then died
+const PROGRESS_STALE_MS = 2 * 60 * 1000; // no progress report for this long = stalled
 
 async function ownedNotebook(id: string, userId: string) {
   const notebook = await db.notebook.findUnique({ where: { id } });
@@ -36,22 +43,27 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   // notebook-wide when no sourceId is given) — falls back to notebook-wide
   // history is kept separate per scope so switching the active source
   // doesn't show a stale "All sources" (or another source's) podcast.
-  const overview = await db.audioOverview.findFirst({
-    where: { notebookId, sourceId: scopeSourceId || null },
-    orderBy: { createdAt: "desc" },
-    select: {
-      id: true,
-      status: true,
-      errorMessage: true,
-      script: true,
-      durationSec: true,
-      createdAt: true,
-      updatedAt: true,
-      sourceId: true,
-      sourceTitle: true,
-      audioUrl: true,
-    },
-  });
+  // This endpoint is polled every couple of seconds while a podcast is
+  // generating, so a transient database blip must not turn into a stream of
+  // failed polls (the client gives up after five and the panel freezes).
+  const overview = await withDbRetry(() =>
+    db.audioOverview.findFirst({
+      where: { notebookId, sourceId: scopeSourceId || null },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        status: true,
+        errorMessage: true,
+        script: true,
+        durationSec: true,
+        createdAt: true,
+        updatedAt: true,
+        sourceId: true,
+        sourceTitle: true,
+        audioUrl: true,
+      },
+    })
+  );
 
   if (!overview) return NextResponse.json({ overview: null });
 
@@ -59,27 +71,48 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   let currentStatus = overview.status;
   let currentError = overview.errorMessage;
 
-  // Stuck job detection: mark an overview FAILED if it sat in QUEUED for more
-  // than 6 minutes (Inngest worker never picked it up) or in SCRIPTING /
-  // SYNTHESIZING for more than 20 minutes (timed out).
+  // Live progress, if any. The pipeline writes a fresh `updatedAt` on every
+  // step ("Recording line 7 of 23"), so it is the only reliable signal that a
+  // long-running job is still making progress.
+  const progress = await getAudioProgress(overview.id);
+  const lastProgressAt = progress?.updatedAt ?? 0;
+  const aliveMs = now - lastProgressAt;
+
+  // Stuck job detection: mark an overview FAILED only when it has genuinely
+  // stalled — no database write AND no progress report — long enough to
+  // conclude nothing is running it.
+  //
+  // The thresholds are deliberately generous. A full podcast is ~23 TTS lines
+  // at 30-125s each, so 5-15 minutes of synthesis is normal; the previous
+  // 6-minute QUEUED cutoff marked healthy-but-slow jobs as failed, and the
+  // pipeline never touched the row again during synthesis, so a job that was
+  // actively recording looked identical to one that was never picked up.
   if (overview.updatedAt) {
     const updatedMs =
       overview.updatedAt instanceof Date ? overview.updatedAt.getTime() : new Date(overview.updatedAt).getTime();
     const ageMs = now - updatedMs;
+    const isAlive = lastProgressAt > 0 && aliveMs < PROGRESS_STALE_MS;
 
-    if (overview.status === "QUEUED" && ageMs > 6 * 60 * 1000) {
-      currentError = "The background worker (Inngest) didn't pick it up - make sure it is running";
+    if (!isAlive && overview.status === "QUEUED" && ageMs > QUEUED_STALE_MS) {
+      currentError =
+        "The background worker (Inngest) didn't pick it up - make sure it is running";
     } else if (
+      !isAlive &&
       (overview.status === "SCRIPTING" || overview.status === "SYNTHESIZING") &&
-      ageMs > 20 * 60 * 1000
+      ageMs > SYNTHESIZING_STALE_MS
     ) {
       currentError = "Audio generation timed out";
     }
 
     if (currentError && currentStatus !== "FAILED") {
-      await db.audioOverview.update({
-        where: { id: overview.id },
-        data: { status: "FAILED", errorMessage: currentError },
+      await withDbRetry(() =>
+        db.audioOverview.update({
+          where: { id: overview.id },
+          data: { status: "FAILED", errorMessage: currentError },
+        })
+      ).catch(() => {
+        // Best-effort: report the failure to the user even if it could not
+        // be persisted.
       });
       await setAudioProgress(overview.id, {
         status: "FAILED",
@@ -90,8 +123,6 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       currentStatus = "FAILED";
     }
   }
-
-  const progress = await getAudioProgress(overview.id);
 
   return NextResponse.json({
     overview: {
@@ -184,8 +215,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const queued = await safeSend({ name: "audio/generate", data: { audioOverviewId: overview.id } });
   if (!queued) {
     const errorMessage =
-      "Couldn't queue audio generation. If you're running locally, make sure `npx inngest-cli@latest dev` is running alongside `npm run dev`; in production, check INNGEST_EVENT_KEY / INNGEST_SIGNING_KEY are set.";
-    await db.audioOverview.update({ where: { id: overview.id }, data: { status: "FAILED", errorMessage } }).catch(() => {});
+      "Couldn't queue audio generation. If you're running locally, make sure `npx inngest-cli@latest dev` is running alongside `npm run dev` " +
+      "(it also needs a moment to connect to the app after startup — try again in a minute if it just started); " +
+      "in production, check INNGEST_EVENT_KEY / INNGEST_SIGNING_KEY are set.";
+    await withDbRetry(() =>
+      db.audioOverview.update({ where: { id: overview.id }, data: { status: "FAILED", errorMessage } })
+    ).catch(() => {});
     await setAudioProgress(overview.id, { status: "FAILED", percent: 0, updatedAt: Date.now(), errorMessage });
   }
 

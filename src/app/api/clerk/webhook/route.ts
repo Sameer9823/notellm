@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { Webhook } from "svix";
-import { db } from "@/lib/db";
+import { withTransaction } from "@/lib/db";
 import { serverEnv } from "@/lib/env";
 
 const webhookSecret = serverEnv.clerk.webhookSecret;
@@ -62,7 +62,7 @@ async function deleteUserData(userId: string): Promise<void> {
   // Delete in dependency order (children first due to foreign keys)
   // Note: Prisma cascade deletes handle most of this, but explicit deletion
   // ensures we don't hit FK issues with tables that don't have cascade.
-  await db.$transaction(async (tx) => {
+  await withTransaction(async (tx) => {
     // Review logs (append-only, safe to delete)
     await tx.reviewLog.deleteMany({ where: { userId } });
 
