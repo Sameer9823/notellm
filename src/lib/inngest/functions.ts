@@ -22,10 +22,10 @@ export const processSource = inngest.createFunction(
     // Ingesting a large PDF means extracting hundreds of pages, embedding
     // every chunk (batched OpenAI calls), upserting them into Qdrant and
     // finally swapping the chunk rows in Postgres — a transaction that
-    // alone takes ~10s for a few hundred chunks. Without an explicit
-    // finish timeout the job can be cut off by Inngest's default partway
-    // through, leaving the source stuck in INDEXING.
-    timeouts: { finish: "15m" },
+    // alone takes ~10s for a few hundred chunks. The job runs inside a
+    // serverless function that the platform terminates at 300s, so the
+    // finish timeout tracks that ceiling rather than outlasting it.
+    timeouts: { finish: "5m" },
   },
   { event: "source/created" },
   async ({ event, step }) => {
@@ -49,10 +49,12 @@ export const generateAudioOverview = inngest.createFunction(
   {
     id: "generate-audio-overview",
     retries: 1,
-    // Two-host script generation + sequential per-segment TTS synthesis can
-    // run long — give this job more headroom than the others before
-    // Inngest considers it timed out.
-    timeouts: { finish: "15m" },
+    // The whole episode has to fit inside the 300s a Vercel Hobby serverless
+    // function is allowed to run, so this finish timeout tracks that ceiling
+    // rather than the old 15m. If you move to a plan that allows a longer
+    // maxDuration, raise `maxDuration` in src/app/api/inngest/route.ts and
+    // this value together.
+    timeouts: { finish: "5m" },
   },
   { event: "audio/generate" },
   async ({ event, step }) => {

@@ -25,7 +25,7 @@ Live demo: https://notellm-two.vercel.app/
 | Vector DB          | Qdrant                                                       | Stores chunk embeddings with `notebookId`/`sourceId` payload indexes so retrieval — and roadmap clustering — is always scoped to one notebook.          |
 | Cache / job status | Redis (ioredis)                                              | Fast, ephemeral progress layer (ingest, audio generation, roadmap generation) so the UI can poll without hammering Postgres; Postgres stays durable.     |
 | LLM / embeddings   | OpenAI (`gpt-4o-mini`, `text-embedding-3-small`)             | Configurable via env vars.                                                                                                                              |
-| Text-to-speech     | OpenAI TTS (`gpt-4o-mini-tts`)                                | Two distinct voices synthesize the generated podcast-style script for the audio overview.                                                              |
+| Text-to-speech     | OpenAI TTS (`tts-1`)                                       | Two distinct voices synthesize the generated podcast-style script for the audio overview. `tts-1` renders a line in ~3.5s, so a full episode fits inside the 300s serverless function limit; `gpt-4o-mini-tts` sounds better but is 20x slower. |
 | Background jobs    | BullMQ (optional worker)                                     | Ingest/audio/roadmap pipelines run inline via `after()` by default; `src/worker` is a drop-in path to move them off the request lifecycle at scale.    |
 | UI                 | Tailwind + Radix primitives (shadcn pattern) + Framer Motion | Dark "ink" theme with an amber→teal status motif for indexing/generation progress.                                                                      |
 
@@ -192,7 +192,7 @@ Generates a two-host, podcast-style summary of a notebook (or a single source):
    however many sources are included — so a single-source notebook gets the full budget instead of a
    fixed per-source cap starving it of context.
 2. **Script** — `generateAudioScript()` asks the LLM for a two-speaker dialogue script.
-3. **Synthesize** — `synthesizeAudioScript()` renders each line with OpenAI TTS (`gpt-4o-mini-tts`) using
+3. **Synthesize** — `synthesizeAudioScript()` renders each line with OpenAI TTS (`tts-1`) using
    a distinct voice per speaker, then concatenates the result into a single audio file.
 4. **Persist** the script and audio to the `AudioOverview` row.
 
@@ -250,7 +250,7 @@ manual setup needed beyond having a reachable Qdrant URL + key.
 | `QDRANT_URL`, `QDRANT_API_KEY`, `QDRANT_COLLECTION`                                           | Vector DB connection + collection name                                           |
 | `REDIS_URL`                                                                                   | Redis connection string (status cache; also used by the optional BullMQ worker)  |
 | `OPENAI_API_KEY`, `OPENAI_CHAT_MODEL`, `OPENAI_EMBEDDING_MODEL`                               | LLM + embedding config                                                           |
-| `OPENAI_TTS_MODEL`                                                                             | *(optional)* TTS model for audio overviews — defaults to `gpt-4o-mini-tts`       |
+| `OPENAI_TTS_MODEL`                                                                             | *(optional)* TTS model for audio overviews — defaults to `tts-1`               |
 | `OPENAI_REALTIME_MODEL`, `OPENAI_REALTIME_VOICE`                                              | *(voice mode)* OpenAI Realtime model + voice identifier                          |
 | `VOICE_TOKEN_SECRET`                                                                           | *(voice mode)* HMAC secret for signing tool tokens — generate with `openssl rand -base64 32` |
 | `VOICE_TOKEN_TTL_SECONDS`                                                                      | *(voice mode)* Ephemeral token TTL — defaults to `600` (10 min)                  |

@@ -43,18 +43,23 @@ export const TTS_MODEL = serverEnv.openai.ttsModel;
  * embeddings and short chat calls but far too short for the two calls the
  * podcast pipeline makes:
  *
- *  - `gpt-4o-mini-tts` takes 30-125s to produce its first byte for a typical
- *    dialogue line (measured against the live API).
- *  - The script call sends ~14k chars of source context and asks for a
- *    2k-token JSON script, which regularly runs past 30s.
+ *  - the script call sends ~14k chars of source context and asks for a
+ *    2k-token JSON script, which regularly runs past 30s, and
+ *  - TTS rendering, which depends heavily on the model: `gpt-4o-mini-tts`
+ *    takes 3-120s per line, `tts-1` about 3.5s.
  *
  * The OpenAI SDK's timeout only covers time-to-first-byte (it is cleared as
  * soon as `fetch` resolves, before the body is streamed), so a too-small value
  * aborts requests that would otherwise have succeeded — and `withRetry` then
- * burns up to 3x that budget per line, which is what pushed a full podcast
- * past the Inngest function's finish timeout.
+ * burns up to 3x that budget per line.
+ *
+ * The TTS budget is deliberately tighter than the script's: the whole job has
+ * to fit inside the 300s ceiling of a Vercel Hobby serverless function, and
+ * because lines are synthesised in parallel only the slowest line of each
+ * batch can extend a batch.
  */
-export const AUDIO_REQUEST_TIMEOUT_MS = 120_000;
+export const AUDIO_SCRIPT_TIMEOUT_MS = 120_000;
+export const AUDIO_TTS_TIMEOUT_MS = 45_000;
 
 function escapeAttr(s: string | undefined): string {
   return (s ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
@@ -176,7 +181,7 @@ export async function generateAudioScript(sourcesContext: string): Promise<Audio
           { role: "user", content: `Source material for this notebook:\n\n${sourcesContext}` },
         ],
       },
-      { timeout: AUDIO_REQUEST_TIMEOUT_MS }
+      { timeout: AUDIO_SCRIPT_TIMEOUT_MS }
     )
   );
 
@@ -198,15 +203,22 @@ export async function generateAudioScript(sourcesContext: string): Promise<Audio
 export async function synthesizeAudioScript(
   lines: AudioScriptLine[],
   voices: { A: string; B: string },
-  onProgress?: (done: number, total: number) => void
+  onProgress?: (done: number, total: number) => void,
+  options: { deadlineMs?: number } = {}
 ): Promise<Buffer> {
-  // A typical 10-18 exchange script is ~23 lines and each line costs 30-125s
-  // of synthesis, so a low concurrency makes the whole job run for many
-  // minutes. 6 keeps the wall-clock near 3 batches while staying well inside
-  // OpenAI's TTS rate limits (429s are retried by withRetry).
+  // A typical 10-18 exchange script is ~23 lines. With `tts-1` a line
+  // renders in ~3.5s, so 6-way concurrency synthesises the whole episode in
+  // about 4 batches (~15s), comfortably inside the 300s serverless budget
+  // even if one line has to be retried. 429s are retried by withRetry.
   const CONCURRENCY = 6;
   const total = lines.length;
   if (total === 0) return Buffer.alloc(0);
+
+  // Wall-clock ceiling for the whole synthesis. A serverless function that
+  // runs past its platform limit is killed without a trace, so the pipeline
+  // stops itself first and reports a real reason instead. This only bites
+  // when the TTS model is unusually slow (e.g. `gpt-4o-mini-tts`).
+  const deadline = options.deadlineMs ? Date.now() + options.deadlineMs : Infinity;
 
   const results: Buffer[] = new Array(total);
   let nextIndex = 0;
@@ -216,6 +228,16 @@ export async function synthesizeAudioScript(
 
   async function worker(): Promise<void> {
     while (!firstError && nextIndex < total) {
+      if (Date.now() > deadline) {
+        const err = new Error(
+          `Speech synthesis exceeded its ${Math.round((options.deadlineMs ?? 0) / 1000)}s time budget ` +
+            `after ${completed} of ${total} lines. The configured TTS model (${TTS_MODEL}) is too slow for ` +
+            `a full episode — set OPENAI_TTS_MODEL to "tts-1".`
+        );
+        if (!firstError) controller.abort();
+        firstError = err;
+        return;
+      }
       const idx = nextIndex++;
       if (idx >= total) return;
       const line = lines[idx];
@@ -230,7 +252,7 @@ export async function synthesizeAudioScript(
                 input: line.text.slice(0, 4000),
                 response_format: "mp3",
               },
-              { timeout: AUDIO_REQUEST_TIMEOUT_MS, signal: controller.signal }
+              { timeout: AUDIO_TTS_TIMEOUT_MS, signal: controller.signal }
             ),
           { signal: controller.signal }
         );

@@ -36,7 +36,7 @@ const envSchema = z.object({
   OPENAI_BASE_URL: z.string().url().default("https://api.openai.com/v1"),
   OPENAI_CHAT_MODEL: z.string().default("gpt-4o-mini"),
   OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
-  OPENAI_TTS_MODEL: z.string().default("gpt-4o-mini-tts"),
+  OPENAI_TTS_MODEL: z.string().default("tts-1"),
   OPENAI_REALTIME_MODEL: z.string().default("gpt-realtime"),
   OPENAI_REALTIME_VOICE: z.string().default("marin"),
 
@@ -131,7 +131,11 @@ export const serverEnv = {
     baseUrl: pick("OPENAI_BASE_URL") ?? "https://api.openai.com/v1",
     chatModel: pick("OPENAI_CHAT_MODEL") ?? "gpt-4o-mini",
     embeddingModel: pick("OPENAI_EMBEDDING_MODEL") ?? "text-embedding-3-small",
-    ttsModel: pick("OPENAI_TTS_MODEL") ?? "gpt-4o-mini-tts",
+    // `gpt-4o-mini-tts` sounds better but takes 3-120s per line (measured),
+    // which puts a full podcast far beyond a 300s serverless function. The
+    // classic `tts-1` model renders the same text in ~3.5s, so the whole
+    // episode synthesises in seconds. Set OPENAI_TTS_MODEL to override.
+    ttsModel: pick("OPENAI_TTS_MODEL") ?? "tts-1",
     realtimeModel: pick("OPENAI_REALTIME_MODEL") ?? "gpt-realtime",
     realtimeVoice: pick("OPENAI_REALTIME_VOICE") ?? "marin",
   },

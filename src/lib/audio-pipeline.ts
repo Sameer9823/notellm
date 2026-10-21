@@ -6,6 +6,17 @@ import { cloudinaryEnabled, uploadBuffer } from "@/lib/cloudinary";
 
 const MAX_CONTEXT_CHARS = 14000; // keep the script-generation prompt bounded
 
+/**
+ * Wall-clock budget for the synthesis phase.
+ *
+ * The job runs inside a serverless function that the platform terminates at
+ * 300s (the Vercel Hobby ceiling). Script generation and the final store
+ * need a slice of that too, so synthesis gets 180s. With the default
+ * `tts-1` model a full episode renders in ~15s, so this budget is only ever
+ * reached when the TTS model is unusually slow.
+ */
+const TTS_DEADLINE_MS = 180_000;
+
 function escapeAttr(s: string | undefined): string {
   return (s ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 }
@@ -43,6 +54,12 @@ export function friendlyAudioError(err: unknown): string {
   const codeStr = typeof code === "string" ? code.toLowerCase() : undefined;
   const typeStr = typeof type === "string" ? type.toLowerCase() : undefined;
   const causeMsgLower = causeMsg.toLowerCase();
+
+  // Synthesis ran out of its wall-clock budget — the TTS model in use is too
+  // slow to render a whole episode inside the serverless function's limit.
+  if (msgLower.includes("time budget")) {
+    return `Speech synthesis took too long to finish. The configured TTS model is too slow to render a full episode — set OPENAI_TTS_MODEL to "tts-1" and try again.`;
+  }
 
   // 401 — bad / missing API key
   if (status === 401) {
@@ -180,7 +197,11 @@ export async function runAudioPipeline(audioId: string) {
             db.audioOverview.update({ where: { id: overview.id }, data: { updatedAt: new Date() } })
           ).catch(() => {});
         }
-      }
+      },
+      // The whole job runs inside a serverless function that the platform
+      // kills at 300s. Give synthesis a slice of that and let it fail with a
+      // real reason rather than being cut off mid-way with nothing to show.
+      { deadlineMs: TTS_DEADLINE_MS }
     );
 
     // Rough duration estimate: ~150 words/minute spoken, used for display
