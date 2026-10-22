@@ -52,7 +52,7 @@
     "fflate": "^0.8.3",
     "fontkit": "^2.0.4",
     "framer-motion": "11.15.0",
-    "inngest": "3.54.0",
+    "inngest": "4.24.0",
     "ioredis": "5.4.2",
     "jsdom": "25.0.1",
     "lucide-react": "0.469.0",
