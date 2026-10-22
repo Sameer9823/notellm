@@ -43,10 +43,12 @@ export type RoadmapEdge = { from: string; to: string };
  * Called via Next's `after()`, same pattern as ingest/audio pipelines.
  */
 export async function runRoadmapPipeline(roadmapId: string) {
-  const roadmap = await db.roadmap.findUnique({ where: { id: roadmapId } });
-  if (!roadmap) return;
-
+  // Fetch inside the try so a DB failure (or missing row) is recorded as
+  // FAILED instead of silently returning and leaving QUEUED forever.
   try {
+    const roadmap = await db.roadmap.findUnique({ where: { id: roadmapId } });
+    if (!roadmap) return;
+
     await mark(roadmap.id, "CLUSTERING", "Gathering linked videos", 8);
 
     const sources = (await db.source.findMany({
@@ -206,10 +208,24 @@ export async function runRoadmapPipeline(roadmapId: string) {
     await setRoadmapProgress(roadmap.id, { status: "READY", percent: 100, updatedAt: Date.now() });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Roadmap generation failed";
-    // eslint-disable-next-line no-console
-    console.error(`[roadmap] ${roadmap.id} (notebook ${roadmap.notebookId}) failed:`, describeError(err));
-    await db.roadmap.update({ where: { id: roadmap.id }, data: { status: "FAILED", errorMessage: message } });
-    await setRoadmapProgress(roadmap.id, { status: "FAILED", errorMessage: message, updatedAt: Date.now() });
+    // `roadmap` is scoped to the try block above; re-fetch by the param id so
+    // a DB error during the original lookup doesn't skip recording the failure.
+    const roadmap = await db.roadmap.findUnique({ where: { id: roadmapId } }).catch(() => null);
+    if (roadmap) {
+      // eslint-disable-next-line no-console
+      console.error(`[roadmap] ${roadmap.id} (notebook ${roadmap.notebookId}) failed:`, describeError(err));
+      await db.roadmap
+        .update({ where: { id: roadmap.id }, data: { status: "FAILED", errorMessage: message } })
+        .catch(() => {});
+      await setRoadmapProgress(roadmap.id, {
+        status: "FAILED",
+        errorMessage: message,
+        updatedAt: Date.now(),
+      }).catch(() => {});
+    } else {
+      // eslint-disable-next-line no-console
+      console.error(`[roadmap] roadmap ${roadmapId} not found during failure recovery:`, describeError(err));
+    }
   }
 }
 

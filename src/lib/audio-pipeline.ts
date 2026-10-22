@@ -127,15 +127,17 @@ export function friendlyAudioError(err: unknown): string {
  * the source ingest pipeline.
  */
 export async function runAudioPipeline(audioId: string) {
-  const overview = await withDbRetry(() => db.audioOverview.findUnique({ where: { id: audioId } }));
-  if (!overview) return;
-
-  // Throttled "still working" signal written to the row while TTS runs.
-  const lastHeartbeatAt = { current: 0 };
-
+  // Fetch the overview inside the try so a DB failure (or a missing row) is
+  // caught and recorded as FAILED instead of silently returning and leaving
+  // the row stuck in QUEUED with no error surfaced.
   try {
-    await mark(overview.id, "SCRIPTING", "Reading through your sources", 10);
+    const overview = await withDbRetry(() => db.audioOverview.findUnique({ where: { id: audioId } }));
+    if (!overview) return;
 
+    // Throttled "still working" signal written to the row while TTS runs.
+    const lastHeartbeatAt = { current: 0 };
+
+    await mark(overview.id, "SCRIPTING", "Reading through your sources", 10);
     const sources = await db.source.findMany({
       where: overview.sourceId
         ? { id: overview.sourceId, notebookId: overview.notebookId, status: "READY" }
@@ -258,20 +260,30 @@ export async function runAudioPipeline(audioId: string) {
     await setAudioProgress(overview.id, { status: "READY", percent: 100, updatedAt: Date.now() });
   } catch (err) {
     const message = friendlyAudioError(err);
-    // eslint-disable-next-line no-console
-    console.error(`[audio] overview ${overview.id} (notebook ${overview.notebookId}) failed:`, describeError(err));
-    // Never let a failure while recording the failure escape — it would
-    // reject the Inngest function and leave the row in a stale state.
-    await withDbRetry(() =>
-      db.audioOverview.update({
-        where: { id: overview.id },
-        data: { status: "FAILED", errorMessage: message },
-      })
-    ).catch((e) => {
+    // `overview` is scoped to the try block above; re-fetch by the param id so
+    // a DB error during the original lookup itself doesn't leave the row unrecorded.
+    const overview = await withDbRetry(() => db.audioOverview.findUnique({ where: { id: audioId } })).catch(
+      () => null
+    );
+    if (overview) {
       // eslint-disable-next-line no-console
-      console.error(`[audio] could not mark overview ${overview.id} as FAILED:`, describeError(e));
-    });
-    await setAudioProgress(overview.id, { status: "FAILED", errorMessage: message, updatedAt: Date.now() });
+      console.error(`[audio] overview ${overview.id} (notebook ${overview.notebookId}) failed:`, describeError(err));
+      // Never let a failure while recording the failure escape — it would
+      // reject the Inngest function and leave the row in a stale state.
+      await withDbRetry(() =>
+        db.audioOverview.update({
+          where: { id: overview.id },
+          data: { status: "FAILED", errorMessage: message },
+        })
+      ).catch((e) => {
+        // eslint-disable-next-line no-console
+        console.error(`[audio] could not mark overview ${overview.id} as FAILED:`, describeError(e));
+      });
+      await setAudioProgress(overview.id, { status: "FAILED", errorMessage: message, updatedAt: Date.now() });
+    } else {
+      // eslint-disable-next-line no-console
+      console.error(`[audio] overview ${audioId} not found during failure recovery:`, describeError(err));
+    }
   }
 }
 

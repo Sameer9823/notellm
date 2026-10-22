@@ -21,6 +21,11 @@ const isProtectedRoute = createRouteMatcher([
 
 const isInngest = createRouteMatcher(["/api/inngest(.*)"]);
 
+// Dev-only diagnostics routes (e.g. /api/dev/inngest-status) — always public
+// so they're reachable without auth in local dev, and they 404 in production
+// themselves so they can't leak from a deployed instance.
+const isDevDiagnostics = createRouteMatcher(["/api/dev/(.*)"]);
+
 const IP_RATE_LIMITED = [
   { pattern: createRouteMatcher(["/api/public/(.*)"]), limitKey: "ipPublic" },
   { pattern: createRouteMatcher(["/api/health(.*)"]), limitKey: "ipHealth" },
@@ -38,6 +43,7 @@ function getClientIp(req: Request): string {
 
 export default clerkMiddleware(async (auth, req) => {
   if (isInngest(req)) return NextResponse.next();
+  if (isDevDiagnostics(req)) return NextResponse.next();
 
   // Rate limiting: production only, and fail-open so Redis problems never take the site down
   if (process.env.NODE_ENV === "production") {

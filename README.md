@@ -269,8 +269,10 @@ manual setup needed beyond having a reachable Qdrant URL + key.
 | `VOICE_CREDIT_COST_PER_BLOCK`, `VOICE_CREDIT_BLOCK_MINUTES`                                   | *(voice mode)* Credit cost + duration per voice block                           |
 | `CREDITS_MAX_PER_WINDOW`                                                                       | *(optional)* Credits per user per window — defaults to `200`                      |
 | `CREDITS_WINDOW_HOURS`                                                                         | *(optional)* Hours before the credit balance refreshes — defaults to `6`         |
+| `INNGEST_DEV`                                                                                     | *(local dev)* Set to `1`; runs events through the local `inngest-cli dev` server instead of Inngest Cloud |
 | `INNGEST_EVENT_KEY`                                                                            | **Production only.** Inngest event key (from the Inngest dashboard)              |
 | `INNGEST_SIGNING_KEY`                                                                          | **Production only.** Inngest signing key (from the Inngest dashboard)            |
+| `INNGEST_DEVSERVER_URL`                                                                        | *(optional)* Override the dev-server URL (default `http://localhost:8288`)       |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`                                       | Clerk auth                                                                       |
 | `NEXT_PUBLIC_CLERK_SIGN_IN_URL` / `SIGN_UP_URL` / `AFTER_SIGN_IN_URL` / `AFTER_SIGN_UP_URL`   | Clerk redirect routing                                                           |
 | `NEXT_PUBLIC_APP_URL`                                                                          | Used for absolute links where needed (e.g. share links)                          |
@@ -290,38 +292,49 @@ for this scale; the Inngest serve endpoint dispatches each step back into your o
 A source whose `status` never leaves `QUEUED` almost always means the Inngest event was enqueued but no
 worker ever ran it. Check the following, in order:
 
-1. **Local dev — is the Inngest dev server running?** `npm run dev` runs both Next.js and
-   `npx inngest-cli@latest dev` in one terminal. If you launched `next dev` directly, start the dev
-   server in a second terminal: `npx inngest-cli@latest dev`. `safeSend` (`lib/inngest/client.ts`)
-   probes `http://localhost:8288/dev` and fails loudly if the dev server is unreachable or hasn't
-   registered your app yet.
+1. **Local dev — is the Inngest dev server running?** `npm run dev` starts Next.js *and* the
+   locally installed `inngest-cli dev` (no per-run download) in one terminal via `concurrently`; the
+   dev server is pointed at `http://localhost:<PORT>/api/inngest` with `--no-discovery` so it never
+   auto-registers the wrong URL. If you launched `next dev` directly, start it in a second terminal:
+   `npm run dev:inngest`. `safeSend` (`lib/inngest/client.ts`) probes the dev server (trying both
+   `localhost` and `127.0.0.1` to dodge Windows IPv6 mismatches) and fails loudly if it's unreachable
+   or hasn't registered your app yet. For visual confirmation open `http://localhost:8288` (Apps tab
+   → `footnote` registered; Runs tab → live step executions), or hit the diagnostics endpoint
+   `GET /api/dev/inngest-status` which returns `inngest.devServerReachable`, `inngest.appRegistered`,
+   the registered function slugs, a Redis ping, and booleans for the Inngest env vars (values are
+   never returned).
 2. **Is the app synced in Inngest Cloud (production)?** Open `https://<your-domain>/api/inngest` —
    the JSON response lists your registered functions (`source/created`, `audio/generate`, etc.). In
    the Inngest dashboard, go to **Apps → footnote** and confirm all four functions are registered. If
    they're missing, click **Sync** / re-save your Inngest integration.
-3. **Missing signing/event keys.** Production enqueue of `source/created` requires
+3. **Missing signing/event keys (production).** Production enqueue of `source/created` requires
    `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY` (both in the Inngest dashboard, both set as Vercel
    project env vars). `safeSend` prints a clear `[inngest]` error to the Vercel logs if either is
    unset instead of silently dropping the event.
-4. **Vercel Deployment Protection blocking `/api/inngest`.** Inngest Cloud must be able to POST back
+4. **Keys set locally (a common trap).** For local dev, set `INNGEST_DEV=1` and leave
+   `INNGEST_EVENT_KEY` / `INNGEST_SIGNING_KEY` **empty**. If you paste your Inngest Cloud keys into
+   a local `.env`, `inngest.send()` talks to Inngest Cloud — which can't callback to your localhost
+   app — so events are accepted and sit in `QUEUED` forever.
+5. **Vercel Deployment Protection blocking `/api/inngest`.** Inngest Cloud must be able to POST back
    to your deployed URL unauthenticated. The proxy middleware (`src/proxy.ts`, `isInngest` matcher)
    exempts `/api/inngest*` from Clerk auth, but a Vercel password/Protection rule that gates *all*
    traffic can still block Inngest's callback. Disable "Deployment Protection" for the production
    deployment, or whitelist Inngest's callback IPs.
-5. **Redis URL is wrong.** `REDIS_URL` must be the TCP form (`redis://` or `rediss://` over TLS).
-   Upstash's default "REST URL" (`https://...`) is **not** accepted by ioredis — ioredest treats it as
-   a normal string and the connection silently fails, which makes progress polling fall back to Postgres
+6. **Redis URL is wrong.** `REDIS_URL` must be the TCP form (`redis://` or `rediss://` over TLS).
+   Upstash's default "REST URL" (`https://...`) is **not** accepted by ioredis — ioredis treats it
+   as a plain string and the connection silently fails, which makes progress polling fall back to Postgres
    (slower, and the cache never warms). Get the "UPSTASH_REDIS_URL"-style TCP URL from the Upstash
    console, or use `rediss://` for TLS. Redis failures are non-fatal (the app keeps working against
    Postgres) but they are now logged via `console.warn("[redis] …")` in `lib/redis.ts`.
-6. **The job is genuinely stuck.** If a source sits `QUEUED` for more than 2 minutes, the status
+7. **The job is genuinely stuck.** If a source sits `QUEUED` for more than 2 minutes, the status
    endpoint (`GET /api/sources/[id]/status`) auto-marks it `FAILED` with
    "Background worker did not pick up this job. Check Inngest setup, then retry via reindex".
    Retry it with `POST /api/sources/[id]/reindex`, or delete and re-add the source.
 
 To test end-to-end locally: sign in, create a notebook, paste a plain-text source (type `TEXT`), and watch
 the sources rail go `UPLOADING → QUEUED → INDEXING → READY` within seconds. If it stalls at `QUEUED`,
-check terminal 2 (the Inngest dev server) for errors.
+open `http://localhost:8288` (Runs tab) or `GET /api/dev/inngest-status` to confirm the dev server is
+reachable and the `footnote` app is registered.
 
 ---
 

@@ -4,7 +4,9 @@
   "private": true,
   "description": "AI-powered research assistant (NotebookLM-style) — multi-source RAG with citations.",
   "scripts": {
-    "dev": "concurrently -n \"next,inngest\" \"next dev\" \"npx --yes inngest-cli@latest dev\"",
+    "dev:next": "next dev",
+    "dev:inngest": "node -e \"const p=process.env.PORT||3000;const r=require('child_process').spawnSync('inngest-cli',['dev','-u','http://localhost:'+p+'/api/inngest','--no-discovery'],{stdio:'inherit'});process.exitCode=r.status\"",
+    "dev": "concurrently -n \"next,inngest\" \"npm run dev:next\" \"npm run dev:inngest\"",
     "build": "prisma generate && next build",
     "start": "prisma migrate deploy && next start",
     "lint": "eslint .",

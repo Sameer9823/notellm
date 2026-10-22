@@ -219,12 +219,14 @@ async function mark(artifactId: string, status: "GENERATING" | "READY" | "FAILED
 /** Runs the full artifact pipeline for one artifact row: gather source
  *  context -> generate structured content -> persist -> (for
  *  FLASHCARDS/QUIZ) sync spaced-repetition review cards. Called via
- *  Next's `after()`, same pattern as audio/roadmap generation. */
+ *  Next's `after()`, same pattern as ingest/audio generation.
+ */
 export async function runArtifactPipeline(artifactId: string) {
-  const artifact = await db.artifact.findUnique({ where: { id: artifactId } });
-  if (!artifact) return;
-
+  // Fetch inside the try so a DB failure (or missing row) is recorded as
+  // FAILED instead of silently returning and leaving QUEUED forever.
   try {
+    const artifact = await db.artifact.findUnique({ where: { id: artifactId } });
+    if (!artifact) return;
     await mark(artifact.id, "GENERATING", "Reading through your sources", 15);
     const { text } = await gatherSourceContext(artifact.notebookId, artifact.sourceIds);
 
@@ -245,24 +247,37 @@ export async function runArtifactPipeline(artifactId: string) {
       console.error(`[artifact] failed to sync review cards for ${updated.id}:`, describeError(err));
     });
   } catch (err) {
-    let message: string;
-    if (err instanceof z.ZodError) {
-      // eslint-disable-next-line no-console
-      console.error(`[artifact] validation error for artifact ${artifact.id}:`, err.issues);
-      message = "The AI returned an unexpected format. Try again.";
+    // `artifact` is scoped to the try block above; re-fetch by the param id so
+    // a DB error during the original lookup doesn't skip recording the failure.
+    const artifact = await db.artifact.findUnique({
+      where: { id: artifactId },
+      select: { id: true, notebookId: true, type: true },
+    }).catch(() => null);
+    if (artifact) {
+      let message: string;
+      if (err instanceof z.ZodError) {
+        // eslint-disable-next-line no-console
+        console.error(`[artifact] validation error for artifact ${artifact.id}:`, err.issues);
+        message = "The AI returned an unexpected format. Try again.";
+      } else {
+        message = describeError(err);
+      }
+      await db.artifact
+        .update({ where: { id: artifact.id }, data: { status: "FAILED", errorMessage: message } })
+        .catch(() => {});
+      await mark(artifact.id, "FAILED", "Generation failed", 100, message);
+      // Refund the artifact-generation credit on failure — the user paid
+      // but got nothing usable back.
+      const notebook = await db.notebook.findUnique({
+        where: { id: artifact.notebookId },
+        select: { ownerId: true },
+      });
+      if (notebook) {
+        void refundCredits(notebook.ownerId, CREDIT_COSTS.artifactGenerate);
+      }
     } else {
-      message = describeError(err);
-    }
-    await db.artifact.update({ where: { id: artifact.id }, data: { status: "FAILED", errorMessage: message } });
-    await mark(artifact.id, "FAILED", "Generation failed", 100, message);
-    // Refund the artifact-generation credit on failure — the user paid
-    // but got nothing usable back.
-    const notebook = await db.notebook.findUnique({
-      where: { id: artifact.notebookId },
-      select: { ownerId: true },
-    });
-    if (notebook) {
-      void refundCredits(notebook.ownerId, CREDIT_COSTS.artifactGenerate);
+      // eslint-disable-next-line no-console
+      console.error(`[artifact] artifact ${artifactId} not found during failure recovery:`, describeError(err));
     }
   }
 }

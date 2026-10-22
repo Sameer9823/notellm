@@ -1,8 +1,7 @@
 "use client";
 
-import { ClerkProvider, UserButton } from "@clerk/nextjs";
+import { ClerkProvider } from "@clerk/nextjs";
 import { useTheme } from "next-themes";
-import { useEffect, useState } from "react";
 import { Toaster } from "sonner";
 import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
 
@@ -18,12 +17,9 @@ const jetbrainsMono = JetBrains_Mono({
 
 export function ClerkProviderWrapper({ children }: { children: React.ReactNode }) {
   const { resolvedTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
+  // `resolvedTheme` is undefined on the very first render — `isDark` resolves
+  // to `false` then, which is fine; the theme is read again once mounted and
+  // Clerk picks up the change without the old remount-driven double init.
   const isDark = resolvedTheme === "dark";
 
   return (

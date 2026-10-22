@@ -41,13 +41,16 @@ async function ensureEnglishCues(cues: Cue[]): Promise<{ cues: Cue[]; language: 
  * upload request, and reports live progress through Redis for polling.
  */
 export async function runIngestPipeline(sourceId: string) {
-  const source = await db.source.findUnique({
-    where: { id: sourceId },
-    include: { sourceFile: true },
-  });
-  if (!source) return;
-
+  // Fetch the source inside the try so a DB failure (or a missing row) is
+  // caught and recorded as FAILED instead of silently returning and leaving
+  // the row stuck in QUEUED with no error surfaced.
   try {
+    const source = await db.source.findUnique({
+      where: { id: sourceId },
+      include: { sourceFile: true },
+    });
+    if (!source) return;
+
     await mark(source.id, "INDEXING", "Extracting content", 10);
     const { chunks, metadata } = await extractAndChunk(source);
 
@@ -148,13 +151,23 @@ export async function runIngestPipeline(sourceId: string) {
     await setProgress(source.id, { status: "READY", percent: 100, updatedAt: Date.now() });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Indexing failed";
-    // eslint-disable-next-line no-console
-    console.error(`[ingest] source ${source.id} (${source.type} "${source.title}") failed:`, describeError(err));
-    await db.source.update({
-      where: { id: source.id },
-      data: { status: "FAILED", errorMessage: message },
-    });
-    await setProgress(source.id, { status: "FAILED", errorMessage: message, updatedAt: Date.now() });
+    // `source` is scoped to the try block above; re-fetch by the param id so a
+    // DB error during the original lookup itself doesn't leave the row unrecorded.
+    const source = await db.source.findUnique({ where: { id: sourceId } }).catch(() => null);
+    if (source) {
+      // eslint-disable-next-line no-console
+      console.error(`[ingest] source ${source.id} (${source.type} "${source.title}") failed:`, describeError(err));
+      await db.source
+        .update({
+          where: { id: source.id },
+          data: { status: "FAILED", errorMessage: message },
+        })
+        .catch(() => {});
+      await setProgress(source.id, { status: "FAILED", errorMessage: message, updatedAt: Date.now() }).catch(() => {});
+    } else {
+      // eslint-disable-next-line no-console
+      console.error(`[ingest] source ${sourceId} not found during failure recovery:`, describeError(err));
+    }
   }
 }
 
