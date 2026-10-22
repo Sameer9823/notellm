@@ -282,7 +282,7 @@ export function SourcesRail({
                 All sources
               </div>
               <div className="truncate text-[11px] text-muted-foreground">
-                {readyCount}/{sources.length} ready · Chat, audio & roadmap
+                {readyCount}/{sources.length} ready · Chat & audio
               </div>
             </div>
           </button>

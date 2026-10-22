@@ -10,7 +10,7 @@ type RightPanelKind =
   | null
   | { kind: "citation"; citation: { sourceId: string; chunkId: string; page?: number | null; snippet?: string; sourceTitle?: string; sourceType: string; url?: string; marker?: number } }
   | { kind: "audio" }
-  | { kind: "roadmap" }
+  // | { kind: "roadmap" }
   | { kind: "study" }
   | { kind: "notes" };
 
@@ -28,7 +28,7 @@ interface RightPanelProps {
 function getTabInfo(kind: StudioTabId): { icon: string; label: string } {
   switch (kind) {
     case "audio": return { icon: "🎧", label: "Audio" };
-    case "roadmap": return { icon: "🗺️", label: "Roadmap" };
+    // case "roadmap": return { icon: "🗺️", label: "Roadmap" };
     case "study": return { icon: "📚", label: "Study" };
     case "notes": return { icon: "📝", label: "Notes" };
     default: return { icon: "", label: "Studio" };

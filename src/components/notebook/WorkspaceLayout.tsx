@@ -29,7 +29,7 @@ const DESKTOP_QUERY = "(min-width: 1024px)";
 
 const TABS: { id: StudioTabId; label: string; icon: typeof Headphones }[] = [
   { id: "audio", label: "Audio", icon: Headphones },
-  { id: "roadmap", label: "Roadmap", icon: Map },
+  // { id: "roadmap", label: "Roadmap", icon: Map },
   { id: "study", label: "Study", icon: GraduationCap },
   { id: "notes", label: "Notes", icon: StickyNote },
 ];

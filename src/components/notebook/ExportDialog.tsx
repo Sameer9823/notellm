@@ -38,7 +38,7 @@ const ALL_SECTIONS = [
   { key: "sources", label: "Sources overview", description: "Table of all indexed sources" },
   { key: "notes", label: "Notes", description: "All pinned notes in creation order" },
   { key: "summary", label: "Summary / Key concepts", description: "Existing study guides, FAQs, briefings" },
-  { key: "roadmap", label: "Learning roadmap", description: "Ordered concepts with keywords & timestamps" },
+  // { key: "roadmap", label: "Learning roadmap", description: "Ordered concepts with keywords & timestamps" },
   { key: "flashcards", label: "Flashcards / Review cards", description: "Q&A pairs grouped by topic" },
   { key: "audio", label: "Audio overview script", description: "Speaker-labelled dialogue" },
   { key: "appendix", label: "Appendix: Full source list", description: "Complete source list with links" },

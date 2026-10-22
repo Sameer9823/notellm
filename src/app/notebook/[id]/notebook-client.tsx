@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { UserButton } from "@clerk/nextjs";
-import { ArrowLeft, GraduationCap, Headphones, Map, Share2, StickyNote, Maximize2, Minimize2, PanelLeft, PanelRight, Download } from "lucide-react";
+import { ArrowLeft, GraduationCap, Headphones, Share2, StickyNote, Maximize2, Minimize2, PanelLeft, PanelRight, Download } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
 import { SourcesRail } from "@/components/notebook/SourcesRail";
 import { AddSourceDialog } from "@/components/source/AddSourceDialog";
@@ -13,7 +13,7 @@ import { ExportDialog } from "@/components/notebook/ExportDialog";
 import { ChatPanel, type ChatPanelHandle } from "@/components/chat/ChatPanel";
 import { StudioPanel } from "@/components/studio/StudioPanel";
 import { AudioOverviewPanel } from "@/components/studio/AudioOverviewPanel";
-import { RoadmapPanel } from "@/components/studio/RoadmapPanel";
+// import { RoadmapPanel } from "@/components/studio/RoadmapPanel";
 import { ArtifactsPanel } from "@/components/studio/ArtifactsPanel";
 import { NotesPanel } from "@/components/notes/NotesPanel";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -37,7 +37,7 @@ type RightPanel =
   | null
   | { kind: "citation"; citation: Citation }
   | { kind: "audio" }
-  | { kind: "roadmap" }
+  // | { kind: "roadmap" }
   | { kind: "study" }
   | { kind: "notes" };
 
@@ -88,11 +88,11 @@ export function NotebookClient() {
     setRightOpen(true);
   }, []);
 
-  const openRoadmap = useCallback(() => {
-    setRightPanel({ kind: "roadmap" });
-    setRightPanelKind("tabs");
-    setRightOpen(true);
-  }, []);
+  // const openRoadmap = useCallback(() => {
+  //   setRightPanel({ kind: "roadmap" });
+  //   setRightPanelKind("tabs");
+  //   setRightOpen(true);
+  // }, []);
 
   const openStudy = useCallback(() => {
     setRightPanel({ kind: "study" });
@@ -142,7 +142,7 @@ export function NotebookClient() {
   }, [id, notebook?.title]);
 
   const audioOpen = rightPanel?.kind === "audio";
-  const roadmapOpen = rightPanel?.kind === "roadmap";
+  // const roadmapOpen = rightPanel?.kind === "roadmap";
   const artifactsOpen = rightPanel?.kind === "study";
   const notesOpen = rightPanel?.kind === "notes";
   const citation = rightPanel?.kind === "citation" ? rightPanel.citation : null;
@@ -196,9 +196,9 @@ export function NotebookClient() {
       case "audio":
         openAudio();
         break;
-      case "roadmap":
-        openRoadmap();
-        break;
+      // case "roadmap":
+      //   openRoadmap();
+      //   break;
       case "study":
         openStudy();
         break;
@@ -206,7 +206,7 @@ export function NotebookClient() {
         openNotes();
         break;
     }
-  }, [openAudio, openRoadmap, openStudy, openNotes]);
+  }, [openAudio, openStudy, openNotes]);
 
   const handleSourcesOpenChange = useCallback((open: boolean) => {
     setSourcesOpen(open);
@@ -291,7 +291,7 @@ export function NotebookClient() {
           onSwitchTab={openAudio}
         />
       )}
-      {rightPanel?.kind === "roadmap" && (
+      {/* {rightPanel?.kind === "roadmap" && (
         <RoadmapPanel
           key={`roadmap-${resetKey}`}
           notebookId={notebook.id}
@@ -303,7 +303,7 @@ export function NotebookClient() {
           onClose={closeRightPanel}
           onSwitchTab={openRoadmap}
         />
-      )}
+      )} */}
       {rightPanel?.kind === "study" && (
         <ArtifactsPanel
           key={`artifacts-${resetKey}`}
@@ -372,7 +372,7 @@ export function NotebookClient() {
             >
               <Headphones className="h-4 w-4" />
             </Button>
-            <Button
+            {/* <Button
               variant="ghost"
               size="icon"
               className={cn(roadmapOpen && "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary")}
@@ -381,7 +381,7 @@ export function NotebookClient() {
               aria-pressed={roadmapOpen}
             >
               <Map className="h-4 w-4" />
-            </Button>
+            </Button> */}
             <Button
               variant="ghost"
               size="icon"

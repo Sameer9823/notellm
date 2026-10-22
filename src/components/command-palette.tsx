@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem, CommandSeparator, CommandShortcut } from "@/components/ui/command";
 import { Kbd } from "@/components/ui/kbd";
-import { Search, Plus, FileText, Link, Youtube, Sparkles, Headphones, Map, GraduationCap, StickyNote, Palette, Keyboard } from "lucide-react";
+import { Search, Plus, FileText, Link, Youtube, Sparkles, Headphones, GraduationCap, StickyNote, Palette, Keyboard } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface CommandPaletteProps {
@@ -121,10 +121,10 @@ export function CommandPalette({
                     <Headphones className="h-4 w-4 mr-2" />
                     Audio overview
                   </CommandItem>
-                  <CommandItem onSelect={() => handleAction(() => { /* Roadmap */ })}>
+                  {/* <CommandItem onSelect={() => handleAction(() => { // roadmap })}>
                     <Map className="h-4 w-4 mr-2" />
                     Learning roadmap
-                  </CommandItem>
+                  </CommandItem> */}
                   <CommandItem onSelect={() => handleAction(() => { /* Study tools */ })}>
                     <GraduationCap className="h-4 w-4 mr-2" />
                     Study tools
