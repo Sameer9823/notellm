@@ -4,7 +4,7 @@ import { signUpload, cloudinaryEnabled } from "@/lib/cloudinary";
 import { z } from "zod";
 
 const querySchema = z.object({
-  folder: z.string().min(1),
+  folder: z.string().min(1).startsWith("footnote/"),
   resourceType: z.enum(["image", "video", "raw"]).optional(),
   publicId: z.string().optional(),
 });

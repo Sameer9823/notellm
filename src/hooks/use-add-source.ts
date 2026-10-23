@@ -36,16 +36,68 @@ export function useAddSource(notebookId: string, onAdded: () => void) {
     }
   }
 
+  /** PDFs go browser -> Cloudinary directly (Vercel rejects request bodies
+   *  over ~4.5MB with a 413 before our route runs), then only the resulting
+   *  URL is POSTed to our API. Falls back to the old multipart path when
+   *  Cloudinary isn't configured (local dev) or for small VTT files. */
+  async function uploadPdfDirect(file: File): Promise<Response | null> {
+    const base = `/api/notebooks/${notebookId}/sources`;
+    const folder = `footnote/sources/${notebookId}`;
+
+    const signRes = await fetch(
+      `/api/cloudinary/upload-signature?folder=${encodeURIComponent(folder)}&resourceType=raw`
+    );
+    if (!signRes.ok) return null; // not configured -> caller falls back to multipart
+    const sign = await signRes.json();
+
+    const cloudForm = new FormData();
+    cloudForm.append("file", file);
+    cloudForm.append("folder", sign.folder);
+    cloudForm.append("timestamp", String(sign.timestamp));
+    cloudForm.append("api_key", sign.apiKey);
+    cloudForm.append("signature", sign.signature);
+
+    const up = await fetch(`https://api.cloudinary.com/v1_1/${sign.cloudName}/raw/upload`, {
+      method: "POST",
+      body: cloudForm,
+    });
+    const uploaded = await up.json().catch(() => null);
+    if (!up.ok || !uploaded?.secure_url) {
+      throw new Error(uploaded?.error?.message || "Upload to file storage failed");
+    }
+
+    return fetch(base, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "PDF",
+        title: file.name,
+        fileSizeBytes: file.size,
+        storagePath: uploaded.secure_url,
+        storagePublicId: uploaded.public_id,
+      }),
+    });
+  }
+
   async function submitFile(file: File, type: Extract<SourceType, "PDF" | "VTT">) {
     setSubmitting(true);
     try {
-      const form = new FormData();
-      form.append("file", file);
-      form.append("type", type);
-      const res = await fetch(`/api/notebooks/${notebookId}/sources`, { method: "POST", body: form });
+      let res: Response | null = null;
+      if (type === "PDF") res = await uploadPdfDirect(file);
+
+      if (!res) {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("type", type);
+        res = await fetch(`/api/notebooks/${notebookId}/sources`, { method: "POST", body: form });
+      }
+
       if (!res.ok) {
+        if (res.status === 413) {
+          throw new Error("File is too large to upload. Configure Cloudinary so large PDFs can upload directly.");
+        }
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "Failed to upload file");
+        throw new Error(err.error?.formErrors?.[0] || err.error || "Failed to upload file");
       }
       const result = await res.json();
       if (result.warning) {
