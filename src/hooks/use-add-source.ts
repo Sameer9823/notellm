@@ -65,10 +65,18 @@ export function useAddSource(notebookId: string, onAdded: () => void) {
     const up = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/raw/upload`, {
       method: "POST",
       body: cloudForm,
+    }).catch((err) => {
+      console.error("[uploadPdfDirect] Fetch failed:", err);
+      throw new Error(`Network error uploading to Cloudinary: ${err.message}`);
     });
     const uploaded = await up.json().catch(() => null);
     if (!up.ok || !uploaded?.secure_url) {
-      throw new Error(uploaded?.error?.message || "Upload to file storage failed");
+      console.error("[uploadPdfDirect] Cloudinary error response:", {
+        status: up.status,
+        statusText: up.statusText,
+        uploaded,
+      });
+      throw new Error(uploaded?.error?.message || `Upload to file storage failed (${up.status})`);
     }
 
     // Debug: log what Cloudinary returned
