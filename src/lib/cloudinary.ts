@@ -90,7 +90,6 @@ export function signUpload(params: {
     resourceType: params.resourceType ?? "raw",
   };
 }
-
 /**
  * Uploads a buffer to Cloudinary under the given resource type and folder.
  * `resourceType` should be "raw" for arbitrary files (PDFs, VTTs) and

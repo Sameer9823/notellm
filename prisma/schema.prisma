@@ -224,10 +224,10 @@ model AudioOverview {
   script       Json?
 
   // MP3 stored in Cloudinary when CLOUDINARY_* env vars are configured
-  // (audioUrl/audioPublicId set, audioData left null); falls back to
+  // (audioUrl/audioPublicId set to the Cloudinary URL/public_id, audioData left null); falls back to
   // storing raw bytes directly in Postgres via `audioData` otherwise, or
   // for rows created before Cloudinary was wired in. `/audio/[id]/file`
-  // checks audioUrl first and redirects there, serving audioData as the
+  // checks audioUrl first and redirects to the Cloudinary URL, serving audioData as the
   // legacy fallback.
   audioData    Bytes?
   audioUrl     String?
@@ -255,10 +255,10 @@ model Source {
 
   // Raw location / payload
   originUrl     String?      // website or youtube url
-  // Cloudinary secure_url for the original uploaded file (PDF/VTT) when
+  // Cloudinary URL for the original uploaded file (PDF/VTT) when
   // CLOUDINARY_* env vars are configured — see src/lib/cloudinary.ts. The
-  // ingest pipeline fetches from here instead of decoding a base64 blob
-  // out of `rawText`. Null when Cloudinary isn't configured (falls back
+  // ingest pipeline fetches from here directly instead of decoding a base64
+  // blob out of `rawText`. Null when Cloudinary isn't configured (falls back
   // to the old base64-in-rawText flow) or for non-file source types.
   storagePath   String?
   storagePublicId String?
@@ -292,7 +292,7 @@ model Source {
   @@index([status])
 }
 
-/// Fallback binary storage for original PDF/VTT uploads when Cloudinary
+/// Fallback binary storage for original PDF/VTT uploads when R2
 /// isn't configured or its upload fails. Keeps the file bytes in Postgres
 /// so the ingest pipeline and /api/sources/[id]/file can still access the
 /// original — previously the bytes were base64-encoded into `rawText` and

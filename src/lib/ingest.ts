@@ -179,8 +179,8 @@ async function mark(sourceId: string, status: "INDEXING", step: string, percent:
 /** Fetches a file previously uploaded to Cloudinary (or any https URL) back
  *  into memory for extraction. */
 async function fetchStoredFile(url: string): Promise<Buffer> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Could not fetch stored file (${res.status})`);
+  const res = await fetch(url, { signal: AbortSignal.timeout(60000) });
+  if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
   return Buffer.from(await res.arrayBuffer());
 }
 

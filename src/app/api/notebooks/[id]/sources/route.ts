@@ -7,6 +7,7 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit
 import { consumeCredits, creditsExhaustedResponse, CREDIT_COSTS } from "@/lib/credits";
 import { cloudinaryEnabled, uploadBuffer } from "@/lib/cloudinary";
 import { z } from "zod";
+import crypto from "crypto";
 
 const MAX_PDF_BYTES = 100 * 1024 * 1024;
 
@@ -20,6 +21,15 @@ const jsonSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("TEXT"), title: z.string().min(1).max(160), content: z.string().min(1) }),
   z.object({ type: z.literal("URL"), url: z.string().url() }),
   z.object({ type: z.literal("YOUTUBE"), url: z.string().url() }),
+  // PDF already uploaded straight to Cloudinary by the browser (avoids the
+  // ~4.5MB Vercel request-body limit that multipart uploads hit).
+  z.object({
+    type: z.literal("PDF"),
+    title: z.string().min(1).max(255),
+    fileSizeBytes: z.number().int().positive().max(MAX_PDF_BYTES),
+    storagePath: z.string().url(),
+    storagePublicId: z.string().min(1),
+  }),
 ]);
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -51,7 +61,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: "A PDF or VTT file is required" }, { status: 400 });
     }
     if (type === "PDF" && file.size > MAX_PDF_BYTES) {
-      return NextResponse.json({ error: "PDF exceeds 25MB limit" }, { status: 400 });
+      return NextResponse.json({ error: "PDF exceeds 100MB limit" }, { status: 400 });
     }
 
     const spend = await consumeCredits(userId, CREDIT_COSTS.sourceUpload);
@@ -66,41 +76,48 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     if (cloudinaryEnabled()) {
       try {
+        const publicId = `footnote/sources/${notebookId}/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
         const uploaded = await uploadBuffer(buffer, {
           resourceType: "raw",
           folder: `footnote/sources/${notebookId}`,
+          publicId,
           filename: file.name,
         });
         storagePath = uploaded.url;
         storagePublicId = uploaded.publicId;
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn(`[sources] Cloudinary upload failed for ${file.name}, falling back to inline storage:`, err);
-        uploadWarning = "Couldn't upload to Cloudinary — the original file is stored locally as a fallback and may need re-uploading later.";
+      } catch (e) {
+        uploadWarning = "Cloudinary upload failed — file stored in Postgres instead";
+        console.error("[sources] Cloudinary upload failed:", e);
       }
+    } else {
+      uploadWarning = "Cloudinary not configured — file stored in Postgres (large PDFs may fail)";
     }
 
-    if (type === "PDF" && !storagePath && !cloudinaryEnabled()) {
-      // Warning for local-dev / no-Cloudinary setups: the file is stored in
-      // SourceFile as a fallback, but the user should know the PDF viewer
-      // won't have a Cloudinary CDN URL.
-      uploadWarning = "Cloudinary isn't configured — the original PDF is stored locally as a fallback and may need re-uploading after ingest.";
+    if (type === "PDF") {
+      source = await db.source.create({
+        data: {
+          notebookId,
+          type: "PDF",
+          title: file.name,
+          status: "QUEUED",
+          storagePath,
+          storagePublicId,
+          fileSizeBytes: file.size,
+        },
+      });
+    } else {
+      source = await db.source.create({
+        data: {
+          notebookId,
+          type: "VTT",
+          title: file.name,
+          status: "QUEUED",
+          rawText,
+        },
+      });
     }
 
-    source = await db.source.create({
-      data: {
-        notebookId,
-        type,
-        title: file.name,
-        status: "QUEUED",
-        rawText,
-        storagePath,
-        storagePublicId,
-        fileSizeBytes: file.size,
-      },
-    });
-
-    // Persist the original file bytes in SourceFile when there's no Cloudinary
+    // Fallback: store raw bytes in SourceFile when there's no Cloudinary
     // storagePath, so /api/sources/[id]/file can serve the PDF and the ingest
     // pipeline can re-extract without relying on the transient base64-in-rawText.
     if (type === "PDF" && !storagePath) {
@@ -120,7 +137,29 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!spend.allowed) return creditsExhaustedResponse(spend.status);
     spendStatus = spend.status;
 
-    if (data.type === "TEXT") {
+    if (data.type === "PDF") {
+      // Only accept URLs that look like Cloudinary URLs, so a
+      // client can't make the ingest job fetch an arbitrary object.
+      if (!data.storagePath.startsWith("https://res.cloudinary.com/")) {
+        return NextResponse.json({ error: "Invalid file reference" }, { status: 400 });
+      }
+      // storagePublicId must be scoped to this notebook and end with .pdf
+      const expectedPrefix = `footnote/sources/${notebookId}/`;
+      if (!data.storagePublicId.startsWith(expectedPrefix) || !data.storagePublicId.endsWith(".pdf")) {
+        return NextResponse.json({ error: "Invalid file reference" }, { status: 400 });
+      }
+      source = await db.source.create({
+        data: {
+          notebookId,
+          type: "PDF",
+          title: data.title,
+          status: "QUEUED",
+          storagePath: data.storagePath,
+          storagePublicId: data.storagePublicId,
+          fileSizeBytes: data.fileSizeBytes,
+        },
+      });
+    } else if (data.type === "TEXT") {
       source = await db.source.create({
         data: { notebookId, type: "TEXT", title: data.title, status: "QUEUED", rawText: data.content },
       });

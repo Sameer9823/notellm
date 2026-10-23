@@ -8,11 +8,9 @@ import { db } from "@/lib/db";
  * *original* document and deep-link to an exact page — the chunk-text view
  * in `/content` is great for search results but loses page layout/fidelity.
  *
- * Cloudinary raw URLs have no .pdf extension and report a generic content
- * type, so we hard-set `Content-Type: application/pdf` regardless of what
- * the upstream returns. Byte-range requests are forwarded verbatim so the
- * viewer can page-flip lazily; `Content-Range`/`Content-Length` from the
- * upstream are passed through untouched.
+ * Cloudinary URLs are fetched directly. Byte-range requests are forwarded
+ * verbatim so the viewer can page-flip lazily; `Content-Range`/`Content-Length`
+ * from the upstream are passed through untouched.
  */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { userId } = await auth();
@@ -57,13 +55,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     });
   }
 
+  // Cloudinary URLs are public and don't need presigning
+  const downloadUrl = source.storagePath;
+
   const range = req.headers.get("range");
   const init: RequestInit = {};
   if (range) init.headers = { Range: range };
 
   let upstream: Response;
   try {
-    upstream = await fetch(source.storagePath, init);
+    upstream = await fetch(downloadUrl, init);
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(`[sources/file] Upstream fetch failed for ${source.storagePath}`, err);
@@ -88,7 +89,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (accept) outHeaders.set("Accept-Ranges", accept);
 
   // Stream the upstream body straight through — no buffering of the (up to
-  // 25MB) PDF into memory on the server.
+  // 100MB) PDF into memory on the server.
   return new Response(upstream.body, {
     status: upstream.status,
     headers: outHeaders,

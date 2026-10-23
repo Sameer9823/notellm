@@ -75,17 +75,6 @@ export function WorkspaceLayout({
     cbRef.current = { onSourcesOpenChange, onRightOpenChange };
   });
 
-  // Restore the saved sources state on desktop only (a saved "open" must not pop a sheet on a phone).
-  useEffect(() => {
-    try {
-      if (!window.matchMedia(DESKTOP_QUERY).matches) return;
-      const saved = localStorage.getItem("notebook-sources-open");
-      if (saved !== null) cbRef.current.onSourcesOpenChange(JSON.parse(saved));
-    } catch {
-      // ignore
-    }
-  }, []);
-
   // Persist only the desktop preference.
   useEffect(() => {
     if (isMobile) return;
@@ -103,8 +92,11 @@ export function WorkspaceLayout({
       const mobile = !mq.matches;
       setIsMobile((prev) => {
         if (mobile && (initial || !prev)) {
-          cbRef.current.onSourcesOpenChange(false);
-          cbRef.current.onRightOpenChange(false);
+          // Defer callbacks to next tick to avoid "setState during render" warnings
+          setTimeout(() => {
+            cbRef.current.onSourcesOpenChange(false);
+            cbRef.current.onRightOpenChange(false);
+          }, 0);
         }
         return mobile;
       });

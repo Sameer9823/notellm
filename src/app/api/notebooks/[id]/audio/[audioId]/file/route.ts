@@ -17,9 +17,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "Audio not found" }, { status: 404 });
   }
 
-  // Cloudinary-backed audio: redirect straight to the CDN URL instead of
-  // proxying bytes through this route. Falls back to serving the legacy
-  // in-Postgres bytes below for rows created before Cloudinary was wired
+  // Cloudinary-backed audio: redirect to the public URL. Falls back to serving
+  // the legacy in-Postgres bytes below for rows created before Cloudinary was wired
   // in (or if it wasn't configured at generation time).
   if (overview.audioUrl) {
     return NextResponse.redirect(overview.audioUrl, { status: 302 });

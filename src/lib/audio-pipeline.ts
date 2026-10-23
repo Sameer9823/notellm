@@ -221,10 +221,12 @@ export async function runAudioPipeline(audioId: string) {
     let audioPublicId: string | null = null;
     if (cloudinaryEnabled()) {
       try {
+        const publicId = `footnote/audio/${overview.notebookId}/${overview.id}`;
         const uploaded = await uploadBuffer(audioData, {
-          resourceType: "video", // Cloudinary serves audio formats under its "video" resource type
+          resourceType: "video",
           folder: `footnote/audio/${overview.notebookId}`,
-          filename: `audio-overview-${overview.id}.mp3`,
+          publicId,
+          filename: `${overview.id}.mp3`,
         });
         audioUrl = uploaded.url;
         audioPublicId = uploaded.publicId;

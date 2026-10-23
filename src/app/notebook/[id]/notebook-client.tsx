@@ -56,7 +56,21 @@ export function NotebookClient() {
   const [resetKey, setResetKey] = useState(0);
 
   // UI state for panel visibility
-  const [sourcesOpen, setSourcesOpen] = useState(true);
+  // Initialize sourcesOpen from localStorage on desktop to avoid layout shift
+  const [sourcesOpen, setSourcesOpen] = useState(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const isDesktop = window.matchMedia("(min-width: 1024px)").matches;
+        if (isDesktop) {
+          const saved = localStorage.getItem("notebook-sources-open");
+          if (saved !== null) return JSON.parse(saved);
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return true;
+  });
   const [rightOpen, setRightOpen] = useState(true);
   const [rightPanelKind, setRightPanelKind] = useState<"tabs" | "viewer" | null>("tabs");
   const [focusMode, setFocusMode] = useState(false);
@@ -176,9 +190,9 @@ export function NotebookClient() {
   useKeyboardShortcuts({
     onFocusChat: () => chatRef.current?.focusInput(),
     onAddSource: () => setAddSourceOpen(true),
-    onToggleSources: () => setSourcesOpen((v) => !v),
-    onToggleStudio: () => setRightOpen((v) => !v),
-    onFocusMode: () => setFocusMode((v) => !v),
+    onToggleSources: () => setSourcesOpen((v: boolean) => !v),
+    onToggleStudio: () => setRightOpen((v: boolean) => !v),
+    onFocusMode: () => setFocusMode((v: boolean) => !v),
     onEscape: () => {
       if (rightPanel) {
         closeRightPanel();
@@ -423,7 +437,7 @@ export function NotebookClient() {
               variant="ghost"
               size="icon"
               className={cn(sourcesOpen && "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary")}
-              onClick={() => setSourcesOpen((v) => !v)}
+              onClick={() => setSourcesOpen((v: boolean) => !v)}
               title="Toggle Sources (⌘B)"
               aria-pressed={sourcesOpen}
             >

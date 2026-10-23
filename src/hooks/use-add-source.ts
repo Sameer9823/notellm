@@ -42,22 +42,27 @@ export function useAddSource(notebookId: string, onAdded: () => void) {
    *  Cloudinary isn't configured (local dev) or for small VTT files. */
   async function uploadPdfDirect(file: File): Promise<Response | null> {
     const base = `/api/notebooks/${notebookId}/sources`;
-    const folder = `footnote/sources/${notebookId}`;
 
-    const signRes = await fetch(
-      `/api/cloudinary/upload-signature?folder=${encodeURIComponent(folder)}&resourceType=raw`
-    );
-    if (!signRes.ok) return null; // not configured -> caller falls back to multipart
-    const sign = await signRes.json();
+    // Read NEXT_PUBLIC_ env vars (available in browser)
+    const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
+    const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET || "ml_default";
+
+    if (!cloudName) return null; // not configured -> caller falls back to multipart
+
+    // Build a unique public_id including the extension.
+    // ml_default has "Use filename: true" and "Unique filename: false",
+    // so without an explicit public_id, two uploads with the same filename
+    // would collide and Cloudinary would return the FIRST file's URL.
+    const publicId = `footnote/sources/${notebookId}/${crypto.randomUUID()}.pdf`;
+    const assetFolder = `footnote/sources/${notebookId}`;
 
     const cloudForm = new FormData();
     cloudForm.append("file", file);
-    cloudForm.append("folder", sign.folder);
-    cloudForm.append("timestamp", String(sign.timestamp));
-    cloudForm.append("api_key", sign.apiKey);
-    cloudForm.append("signature", sign.signature);
+    cloudForm.append("upload_preset", uploadPreset);
+    cloudForm.append("public_id", publicId);
+    cloudForm.append("asset_folder", assetFolder);
 
-    const up = await fetch(`https://api.cloudinary.com/v1_1/${sign.cloudName}/raw/upload`, {
+    const up = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/raw/upload`, {
       method: "POST",
       body: cloudForm,
     });

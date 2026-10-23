@@ -5,15 +5,19 @@ import { setProgress } from "@/lib/redis";
 import { safeSend } from "@/lib/inngest/client";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 import { consumeCredits, creditsExhaustedResponse, CREDIT_COSTS } from "@/lib/credits";
-import { cloudinaryEnabled, uploadBuffer } from "@/lib/cloudinary";
+import { cloudinaryEnabled, uploadBuffer, destroyAsset } from "@/lib/cloudinary";
 import { z } from "zod";
+import crypto from "crypto";
 
 const MAX_PDF_BYTES = 100 * 1024 * 1024;
 
-async function ownedNotebook(id: string, userId: string) {
-  const notebook = await db.notebook.findUnique({ where: { id } });
-  if (!notebook || notebook.ownerId !== userId) return null;
-  return notebook;
+async function ownedSource(sourceId: string, userId: string) {
+  const source = await db.source.findUnique({
+    where: { id: sourceId },
+    include: { notebook: true },
+  });
+  if (!source || source.notebook.ownerId !== userId) return null;
+  return source;
 }
 
 const jsonSchema = z.discriminatedUnion("type", [
@@ -41,7 +45,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const { id: notebookId } = await params;
 
-  if (!(await ownedNotebook(notebookId, userId))) {
+  const notebook = await db.notebook.findUnique({ where: { id: notebookId } });
+  if (!notebook || notebook.ownerId !== userId) {
     return NextResponse.json({ error: "Notebook not found" }, { status: 404 });
   }
 
@@ -75,41 +80,48 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     if (cloudinaryEnabled()) {
       try {
+        const publicId = `footnote/sources/${notebookId}/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
         const uploaded = await uploadBuffer(buffer, {
           resourceType: "raw",
           folder: `footnote/sources/${notebookId}`,
+          publicId,
           filename: file.name,
         });
         storagePath = uploaded.url;
         storagePublicId = uploaded.publicId;
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn(`[sources] Cloudinary upload failed for ${file.name}, falling back to inline storage:`, err);
-        uploadWarning = "Couldn't upload to Cloudinary — the original file is stored locally as a fallback and may need re-uploading later.";
+      } catch (e) {
+        uploadWarning = "Cloudinary upload failed — file stored in Postgres instead";
+        console.error("[sources] Cloudinary upload failed:", e);
       }
+    } else {
+      uploadWarning = "Cloudinary not configured — file stored in Postgres (large PDFs may fail)";
     }
 
-    if (type === "PDF" && !storagePath && !cloudinaryEnabled()) {
-      // Warning for local-dev / no-Cloudinary setups: the file is stored in
-      // SourceFile as a fallback, but the user should know the PDF viewer
-      // won't have a Cloudinary CDN URL.
-      uploadWarning = "Cloudinary isn't configured — the original PDF is stored locally as a fallback and may need re-uploading after ingest.";
+    if (type === "PDF") {
+      source = await db.source.create({
+        data: {
+          notebookId,
+          type: "PDF",
+          title: file.name,
+          status: "QUEUED",
+          storagePath,
+          storagePublicId,
+          fileSizeBytes: file.size,
+        },
+      });
+    } else {
+      source = await db.source.create({
+        data: {
+          notebookId,
+          type: "VTT",
+          title: file.name,
+          status: "QUEUED",
+          rawText,
+        },
+      });
     }
 
-    source = await db.source.create({
-      data: {
-        notebookId,
-        type,
-        title: file.name,
-        status: "QUEUED",
-        rawText,
-        storagePath,
-        storagePublicId,
-        fileSizeBytes: file.size,
-      },
-    });
-
-    // Persist the original file bytes in SourceFile when there's no Cloudinary
+    // Fallback: store raw bytes in SourceFile when there's no Cloudinary
     // storagePath, so /api/sources/[id]/file can serve the PDF and the ingest
     // pipeline can re-extract without relying on the transient base64-in-rawText.
     if (type === "PDF" && !storagePath) {
@@ -130,11 +142,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     spendStatus = spend.status;
 
     if (data.type === "PDF") {
-      // Only accept files that live in this notebook's Cloudinary folder, so a
-      // client can't make the ingest job fetch an arbitrary URL.
-      let host = "";
-      try { host = new URL(data.storagePath).hostname; } catch {}
-      if (host !== "res.cloudinary.com" || !data.storagePublicId.startsWith(`footnote/sources/${notebookId}/`)) {
+      // Only accept URLs that look like Cloudinary URLs, so a
+      // client can't make the ingest job fetch an arbitrary object.
+      if (!data.storagePath.startsWith("https://res.cloudinary.com/")) {
         return NextResponse.json({ error: "Invalid file reference" }, { status: 400 });
       }
       source = await db.source.create({
@@ -196,4 +206,74 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         : undefined,
     }
   );
+}
+
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { id: sourceId } = await params;
+
+  const source = await ownedSource(sourceId, userId);
+  if (!source) {
+    return NextResponse.json({ error: "Source not found" }, { status: 404 });
+  }
+
+  // Delete from Cloudinary if stored there (best-effort)
+  if (source.storagePublicId) {
+    try {
+      await destroyAsset(source.storagePublicId, "raw");
+    } catch (err) {
+      console.warn("[sources] Cloudinary delete failed:", err);
+    }
+  }
+
+  // Delete from Qdrant
+  try {
+    const { deleteBySource } = await import("@/lib/qdrant");
+    await deleteBySource(sourceId);
+  } catch (err) {
+    console.warn("[sources] Qdrant delete failed:", err);
+  }
+
+  // Delete from database (cascades to SourceFile, progress, etc.)
+  await db.source.delete({ where: { id: sourceId } });
+
+  // Update notebook timestamp
+  await db.notebook.update({
+    where: { id: source.notebookId },
+    data: { updatedAt: new Date() },
+  });
+
+  return NextResponse.json({ success: true });
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { id: sourceId } = await params;
+
+  const source = await ownedSource(sourceId, userId);
+  if (!source) {
+    return NextResponse.json({ error: "Source not found" }, { status: 404 });
+  }
+
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body.title !== "string" || !body.title.trim()) {
+    return NextResponse.json({ error: "Title is required" }, { status: 400 });
+  }
+
+  const updated = await db.source.update({
+    where: { id: sourceId },
+    data: { title: body.title.trim() },
+  });
+
+  return NextResponse.json({ source: updated });
 }

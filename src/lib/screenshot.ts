@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { getCachedSnapshotUrl, setCachedSnapshotUrl } from "@/lib/redis";
-import { cloudinaryEnabled, uploadBuffer, type CloudinaryUploadResult } from "@/lib/cloudinary";
+import { cloudinaryEnabled, uploadBuffer } from "@/lib/cloudinary";
 import { serverEnv } from "@/lib/env";
 
 // Firecrawl scrape endpoint — same base as src/lib/extractors/firecrawl.ts.
@@ -26,7 +26,7 @@ function sha256(input: string): string {
  * Cloudinary, and caches the Cloudinary URL by URL hash (7-day TTL) so
  * repeat clicks don't re-screenshot the same page.
  *
- * Returns the Cloudinary secure URL, or null if screenshotting isn't
+ * Returns the Cloudinary URL, or null if screenshotting isn't
  * available (no FIRECRAWL_API_KEY, no Cloudinary, or the scrape fails).
  */
 export async function screenshotUrl(url: string): Promise<string | null> {
@@ -71,12 +71,14 @@ export async function screenshotUrl(url: string): Promise<string | null> {
   const buffer = Buffer.from(b64, "base64");
   if (!buffer.length) return null;
 
-  let uploaded: CloudinaryUploadResult;
+  let uploaded: { url: string; publicId: string; bytes: number };
   try {
+    const publicId = `footnote/snapshots/${hash.slice(0, 12)}`;
     uploaded = await uploadBuffer(buffer, {
       resourceType: "image",
       folder: "footnote/snapshots",
-      filename: `snapshot-${hash.slice(0, 12)}.png`,
+      publicId,
+      filename: `${hash.slice(0, 12)}.png`,
     });
   } catch (err) {
     // eslint-disable-next-line no-console

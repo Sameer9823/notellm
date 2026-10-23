@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Source not found" }, { status: 404 });
     }
 
-    // If the Source already has a cached Cloudinary snapshot, return it
+    // If the Source already has a cached snapshot, return the Cloudinary URL
     // without re-screenshotting.
     if (source.snapshotUrl) {
       return NextResponse.json({ imageUrl: source.snapshotUrl });
@@ -74,20 +74,13 @@ export async function POST(req: NextRequest) {
     // Re-fetch to get the latest (it might have been cached above).
     const source = await db.source.findUnique({ where: { id: sourceId } });
     if (source) {
-      const publicId = extractPublicId(imageUrl);
       await db.source.update({
         where: { id: sourceId },
-        data: { snapshotUrl: imageUrl, snapshotPublicId: publicId ?? undefined },
+        data: { snapshotUrl: imageUrl, snapshotPublicId: imageUrl },
       });
     }
   }
 
+  // Return the Cloudinary URL for the snapshot.
   return NextResponse.json({ imageUrl });
-}
-
-/** Extracts the Cloudinary public ID from a secure_url like
- *  `https://res.cloudinary.com/<cloud>/image/upload/v12345/footnote/snapshots/<id>.png` */
-function extractPublicId(url: string): string | null {
-  const match = url.match(/upload\/(?:v\d+\/)?(.+)$/);
-  return match ? match[1] : null;
 }

@@ -10,7 +10,6 @@ function parseOrigin(raw: string | undefined): string | null {
   }
 }
 
-const CLOUDINARY_CLOUD = process.env.CLOUDINARY_CLOUD_NAME;
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
 const IMG_SRC: string[] = [
@@ -24,10 +23,8 @@ const IMG_SRC: string[] = [
   "https://i.ytimg.com",
   "https://*.clerk.com",
 ];
-if (CLOUDINARY_CLOUD) IMG_SRC.push(`https://res.cloudinary.com/${CLOUDINARY_CLOUD}`);
 
 const MEDIA_SRC: string[] = ["'self'", "blob:"];
-if (CLOUDINARY_CLOUD) MEDIA_SRC.push(`https://res.cloudinary.com/${CLOUDINARY_CLOUD}`);
 
 const CONNECT_SRC: string[] = [
   "'self'",
@@ -50,10 +47,6 @@ if (redisOrigin) CONNECT_SRC.push(redisOrigin);
 
 if (process.env.INNGEST_SIGNING_KEY || process.env.INNGEST_EVENT_KEY) {
   CONNECT_SRC.push("https://api.inngest.com", "wss://api.inngest.com");
-}
-
-if (CLOUDINARY_CLOUD) {
-  CONNECT_SRC.push("https://api.cloudinary.com");
 }
 
 const CSP = [
