@@ -39,28 +39,36 @@ export function useAddSource(notebookId: string, onAdded: () => void) {
   /** PDFs go browser -> Cloudinary directly (Vercel rejects request bodies
    *  over ~4.5MB with a 413 before our route runs), then only the resulting
    *  URL is POSTed to our API. Falls back to the old multipart path when
-   *  Cloudinary isn't configured (local dev) or for small VTT files. */
+   *  Cloudinary isn't configured (local dev) or for small VTT files.
+   *  Uses SIGNED upload (no preset needed) - gets signature from our API. */
   async function uploadPdfDirect(file: File): Promise<Response | null> {
     const base = `/api/notebooks/${notebookId}/sources`;
 
     // Read NEXT_PUBLIC_ env vars (available in browser)
     const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
-    const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET || "footnote";
+    const apiKey = process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY;
 
-    if (!cloudName) return null; // not configured -> caller falls back to multipart
+    if (!cloudName || !apiKey) return null; // not configured -> caller falls back to multipart
+
+    // Get signature from our API (uses server-side API secret)
+    const folder = `footnote/sources/${notebookId}`;
+    const sigRes = await fetch(`/api/cloudinary/upload-signature?folder=${encodeURIComponent(folder)}`);
+    if (!sigRes.ok) {
+      const err = await sigRes.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to get upload signature");
+    }
+    const { signature, timestamp, api_key } = await sigRes.json();
 
     // Build a unique public_id including the extension.
-    // footnote has "Use filename: true" and "Unique filename: false",
-    // so without an explicit public_id, two uploads with the same filename
-    // would collide and Cloudinary would return the FIRST file's URL.
-    const publicId = `footnote/sources/${notebookId}/${crypto.randomUUID()}.pdf`;
-    const assetFolder = `footnote/sources/${notebookId}`;
+    const publicId = `${folder}/${crypto.randomUUID()}.pdf`;
 
     const cloudForm = new FormData();
     cloudForm.append("file", file);
-    cloudForm.append("upload_preset", uploadPreset);
+    cloudForm.append("api_key", api_key);
+    cloudForm.append("timestamp", timestamp.toString());
+    cloudForm.append("signature", signature);
+    cloudForm.append("folder", folder);
     cloudForm.append("public_id", publicId);
-    cloudForm.append("asset_folder", assetFolder);
 
     const up = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/raw/upload`, {
       method: "POST",
