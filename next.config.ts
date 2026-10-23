@@ -36,6 +36,7 @@ const CONNECT_SRC: string[] = [
   "https://api.stripe.com",
   "https://*.stripe.com",
   "https://api.clerk.com",
+  "https://*.clerk.accounts.dev",
   "https://tavily.com",
   "https://api.tavily.com",
   "https://api.firecrawl.dev",

@@ -8,7 +8,16 @@ import { consumeCredits, creditsExhaustedResponse, CREDIT_COSTS } from "@/lib/cr
 import { cloudinaryEnabled, uploadBuffer } from "@/lib/cloudinary";
 import { z } from "zod";
 
-const MAX_PDF_BYTES = 25 * 1024 * 1024;
+const MAX_PDF_BYTES = 100 * 1024 * 1024;
+
+// Allow up to 100MB for file uploads (PDFs) - App Router config
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: "100mb",
+    },
+  },
+};
 
 async function ownedNotebook(id: string, userId: string) {
   const notebook = await db.notebook.findUnique({ where: { id } });
