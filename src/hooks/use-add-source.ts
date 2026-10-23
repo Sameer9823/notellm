@@ -71,6 +71,13 @@ export function useAddSource(notebookId: string, onAdded: () => void) {
       throw new Error(uploaded?.error?.message || "Upload to file storage failed");
     }
 
+    // Debug: log what Cloudinary returned
+    console.debug("[uploadPdfDirect] Cloudinary response:", {
+      secure_url: uploaded.secure_url,
+      public_id: uploaded.public_id,
+      expectedPublicId: publicId,
+    });
+
     return fetch(base, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

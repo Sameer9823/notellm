@@ -143,9 +143,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (!data.storagePath.startsWith("https://res.cloudinary.com/")) {
         return NextResponse.json({ error: "Invalid file reference" }, { status: 400 });
       }
-      // storagePublicId must be scoped to this notebook and end with .pdf
+      // storagePublicId must be scoped to this notebook.
+      // Accept either storagePublicId ending with .pdf OR storagePath ending with .pdf
+      // (Cloudinary unsigned upload with "Use filename: true" preset may return
+      // a public_id based on the original filename instead of our explicit public_id).
       const expectedPrefix = `footnote/sources/${notebookId}/`;
-      if (!data.storagePublicId.startsWith(expectedPrefix) || !data.storagePublicId.endsWith(".pdf")) {
+      const publicIdValid = data.storagePublicId.startsWith(expectedPrefix) &&
+        (data.storagePublicId.endsWith(".pdf") || data.storagePath.endsWith(".pdf"));
+      if (!publicIdValid) {
+        // Debug log to diagnose preset behavior
+        console.warn("[sources] Invalid storagePublicId:", {
+          storagePublicId: data.storagePublicId,
+          storagePath: data.storagePath,
+          expectedPrefix,
+        });
         return NextResponse.json({ error: "Invalid file reference" }, { status: 400 });
       }
       source = await db.source.create({
