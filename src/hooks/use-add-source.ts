@@ -45,12 +45,12 @@ export function useAddSource(notebookId: string, onAdded: () => void) {
 
     // Read NEXT_PUBLIC_ env vars (available in browser)
     const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
-    const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET || "ml_default";
+    const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET || "footnote";
 
     if (!cloudName) return null; // not configured -> caller falls back to multipart
 
     // Build a unique public_id including the extension.
-    // ml_default has "Use filename: true" and "Unique filename: false",
+    // footnote has "Use filename: true" and "Unique filename: false",
     // so without an explicit public_id, two uploads with the same filename
     // would collide and Cloudinary would return the FIRST file's URL.
     const publicId = `footnote/sources/${notebookId}/${crypto.randomUUID()}.pdf`;
