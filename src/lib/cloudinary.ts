@@ -32,7 +32,7 @@ export type CloudinaryUploadResult = {
 export type CloudinarySignature = {
   timestamp: number;
   signature: string;
-  apiKey: string;
+  api_key: string;
   cloudName: string;
   folder: string;
   resourceType: CloudinaryResourceType;
@@ -63,7 +63,7 @@ function signParams(params: Record<string, string | number>, apiSecret: string):
 
 /**
  * Generates a signed upload payload for client-side direct-to-Cloudinary uploads.
- * The client posts its file (plus the returned signature/timestamp/apiKey/cloudName)
+ * The client posts its file (plus the returned signature/timestamp/api_key/cloudName)
  * directly to Cloudinary — the API secret never touches the browser.
  */
 export function signUpload(params: {
@@ -84,7 +84,7 @@ export function signUpload(params: {
   return {
     timestamp,
     signature,
-    apiKey,
+    api_key: apiKey,
     cloudName,
     folder: params.folder,
     resourceType: params.resourceType ?? "raw",

@@ -22,7 +22,7 @@ describe("signUpload", () => {
     const result = signUpload({ folder: "footnote/sources/test-notebook" });
 
     expect(result).toMatchObject({
-      apiKey: "123456789012345",
+      api_key: "123456789012345",
       cloudName: "test-cloud",
       folder: "footnote/sources/test-notebook",
       resourceType: "raw",
@@ -32,14 +32,27 @@ describe("signUpload", () => {
     expect(result.signature.length).toBe(40); // SHA1 hex
   });
 
-  it("includes public_id when provided", async () => {
+  it("includes public_id in the signed string when provided", async () => {
     const { signUpload } = await import("@/lib/cloudinary");
     const result = signUpload({
       folder: "footnote/sources/test-notebook",
-      publicId: "custom-id",
+      publicId: "abc-123.pdf",
     });
 
-    // The signature should be different when public_id is included
+    // Re-implement the signing algorithm to verify the signature is reproducible
+    // when public_id is included — proving it was part of the signed payload.
+    const crypto = await import("crypto");
+    const secret = "abcdefghijklmnopqrstuvwxyz12";
+    const params = { folder: "footnote/sources/test-notebook", public_id: "abc-123.pdf", timestamp: result.timestamp };
+    const sorted = Object.keys(params)
+      .sort()
+      .map((k) => `${k}=${params[k as keyof typeof params]}`)
+      .join("&");
+    const expected = crypto.createHash("sha1").update(sorted + secret).digest("hex");
+
+    expect(result.signature).toBe(expected);
+
+    // And verify it differs from the signature without public_id.
     const resultWithout = signUpload({ folder: "footnote/sources/test-notebook" });
     expect(result.signature).not.toBe(resultWithout.signature);
   });

@@ -276,7 +276,9 @@ manual setup needed beyond having a reachable Qdrant URL + key.
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`                                       | Clerk auth                                                                       |
 | `NEXT_PUBLIC_CLERK_SIGN_IN_URL` / `SIGN_UP_URL` / `AFTER_SIGN_IN_URL` / `AFTER_SIGN_UP_URL`   | Clerk redirect routing                                                           |
 | `NEXT_PUBLIC_APP_URL`                                                                          | Used for absolute links where needed (e.g. share links)                          |
-| `FIRECRAWL_API_KEY`                                                                           | *(optional)* Used by the Studio panel to screenshot non-embeddable web pages — falls back to reader view when unset |
+| `FIRECRAWL_API_KEY`                                                                             | *(optional)* Used by the Studio panel to screenshot non-embeddable web pages — falls back to reader view when unset |
+| `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`                            | *(optional)* Server-side Cloudinary credentials for storing original PDFs / generated MP3s off-Postgres      |
+| `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME`, `NEXT_PUBLIC_CLOUDINARY_API_KEY`                             | *(optional)* Browser-facing Cloudinary credentials enabling direct-to-Cloudinary PDF uploads (bypasses Vercel's ~4.5MB body limit) |
 
 ### Deployment
 

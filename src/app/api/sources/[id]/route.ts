@@ -9,7 +9,7 @@ import { cloudinaryEnabled, uploadBuffer, destroyAsset } from "@/lib/cloudinary"
 import { z } from "zod";
 import crypto from "crypto";
 
-const MAX_PDF_BYTES = 100 * 1024 * 1024;
+const MAX_PDF_BYTES = 25 * 1024 * 1024;
 
 async function ownedSource(sourceId: string, userId: string) {
   const source = await db.source.findUnique({
@@ -65,7 +65,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: "A PDF or VTT file is required" }, { status: 400 });
     }
     if (type === "PDF" && file.size > MAX_PDF_BYTES) {
-      return NextResponse.json({ error: "PDF exceeds 100MB limit" }, { status: 400 });
+      return NextResponse.json({ error: "PDF exceeds 25MB limit" }, { status: 400 });
     }
 
     const spend = await consumeCredits(userId, CREDIT_COSTS.sourceUpload);

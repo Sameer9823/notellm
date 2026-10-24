@@ -52,15 +52,17 @@ export function useAddSource(notebookId: string, onAdded: () => void) {
 
     // Get signature from our API (uses server-side API secret)
     const folder = `footnote/sources/${notebookId}`;
-    const sigRes = await fetch(`/api/cloudinary/upload-signature?folder=${encodeURIComponent(folder)}`);
+    // public_id is just the UUID + extension — Cloudinary prepends `folder`
+    // automatically, so including it here would double the path.
+    const publicId = `${crypto.randomUUID()}.pdf`;
+    const sigRes = await fetch(
+      `/api/cloudinary/upload-signature?folder=${encodeURIComponent(folder)}&publicId=${encodeURIComponent(publicId)}`
+    );
     if (!sigRes.ok) {
       const err = await sigRes.json().catch(() => ({}));
       throw new Error(err.error || "Failed to get upload signature");
     }
     const { signature, timestamp, api_key } = await sigRes.json();
-
-    // Build a unique public_id including the extension.
-    const publicId = `${folder}/${crypto.randomUUID()}.pdf`;
 
     const cloudForm = new FormData();
     cloudForm.append("file", file);
@@ -79,11 +81,11 @@ export function useAddSource(notebookId: string, onAdded: () => void) {
     });
     const uploaded = await up.json().catch(() => null);
     if (!up.ok || !uploaded?.secure_url) {
-      console.error("[uploadPdfDirect] Cloudinary error response:", {
-        status: up.status,
-        statusText: up.statusText,
-        uploaded,
-      });
+      const cloudinaryError = uploaded?.error?.message ?? String(up.statusText);
+      const lowered = cloudinaryError.toLowerCase();
+      if (lowered.includes("size") || lowered.includes("too large") || up.status === 413) {
+        throw new Error("PDF exceeds the storage limit (10MB on the current Cloudinary plan)");
+      }
       throw new Error(uploaded?.error?.message || `Upload to file storage failed (${up.status})`);
     }
 
@@ -114,6 +116,17 @@ export function useAddSource(notebookId: string, onAdded: () => void) {
       if (type === "PDF") res = await uploadPdfDirect(file);
 
       if (!res) {
+        // In production, PDFs larger than ~4MB REQUIRE the Cloudinary direct-upload
+        // path — Vercel rejects multipart request bodies over the platform limit
+        // with a 413 before our route handler even runs. Only fall back to the
+        // multipart path for small files or local dev (where Cloudinary is
+        // typically not configured).
+        if (type === "PDF" && file.size > 4 * 1024 * 1024) {
+          throw new Error(
+            "Cloudinary isn't configured on this deployment: set NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME and " +
+              "NEXT_PUBLIC_CLOUDINARY_API_KEY so large PDFs upload directly."
+          );
+        }
         const form = new FormData();
         form.append("file", file);
         form.append("type", type);

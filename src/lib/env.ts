@@ -55,6 +55,8 @@ const envSchema = z.object({
   CLOUDINARY_CLOUD_NAME: z.string().optional(),
   CLOUDINARY_API_KEY: z.string().optional(),
   CLOUDINARY_API_SECRET: z.string().optional(),
+  NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: z.string().optional(),
+  NEXT_PUBLIC_CLOUDINARY_API_KEY: z.string().optional(),
 
   FIRECRAWL_API_KEY: z.string().optional(),
 
@@ -197,4 +199,8 @@ export const clientEnv = {
   inngestDevserverUrl: pick("NEXT_PUBLIC_INNGEST_DEVSERVER_URL"),
   voiceCreditBlockMinutes: Number(pick("NEXT_PUBLIC_VOICE_CREDIT_BLOCK_MINUTES") ?? 5),
   maxSessionMinutes: pick("NEXT_PUBLIC_MAX_SESSION_MINUTES") ? Number(pick("NEXT_PUBLIC_MAX_SESSION_MINUTES")) : 60,
+  cloudinary: {
+    cloudName: pick("NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME"),
+    apiKey: pick("NEXT_PUBLIC_CLOUDINARY_API_KEY"),
+  },
 };
