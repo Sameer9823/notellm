@@ -13,6 +13,8 @@ export function useNotes(notebookId: string) {
     try {
       const res = await fetch(`/api/notebooks/${notebookId}/notes`, { cache: "no-store" });
       if (res.ok) setNotes((await res.json()).notes ?? []);
+    } catch {
+      // Network error — notes will retry on remount.
     } finally {
       setLoading(false);
     }

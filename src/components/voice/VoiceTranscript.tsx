@@ -169,8 +169,8 @@ export function VoiceTranscript({
                           chunkId: c.chunkId,
                           sourceId: c.sourceId,
                           sourceTitle: c.sourceTitle,
-                          sourceType: c.sourceType as
-                            "PDF" | "TEXT" | "URL" | "YOUTUBE" | "VTT" | "WEB",
+                           sourceType: c.sourceType as
+                             "PDF" | "TEXT" | "URL" | "YOUTUBE" | "VTT" | "IMAGE" | "WEB",
                           page: c.page ?? null,
                           startSec: c.startSec ?? null,
                           endSec: c.endSec ?? null,

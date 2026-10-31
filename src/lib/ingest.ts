@@ -8,6 +8,7 @@ import { extractPdf } from "@/lib/extractors/pdf";
 import { extractUrl } from "@/lib/extractors/url";
 import { extractYoutube } from "@/lib/extractors/youtube";
 import { extractVtt } from "@/lib/extractors/vtt";
+import { extractImage } from "@/lib/extractors/image";
 import { describeError } from "@/lib/utils";
 import type { Source } from "@prisma/client";
 
@@ -98,6 +99,8 @@ export async function runIngestPipeline(sourceId: string) {
           startChar: r.chunk.startChar,
           endChar: r.chunk.endChar,
           originUrl: source.originUrl ?? undefined,
+          storagePath: source.storagePath ?? undefined,
+          storagePublicId: source.storagePublicId ?? undefined,
         },
       }))
     );
@@ -254,6 +257,32 @@ async function extractAndChunk(
           durationSec: result.durationSec,
           language,
           rawText: cues.map((c) => c.text).join(" ").slice(0, 4000),
+        },
+      };
+    }
+    case "IMAGE": {
+      let buffer: Buffer;
+      if (source.storagePath) {
+        buffer = await fetchStoredFile(source.storagePath);
+      } else if (source.sourceFile?.data) {
+        buffer = Buffer.from(source.sourceFile.data);
+      } else {
+        buffer = Buffer.from(source.rawText ?? "", "base64");
+      }
+      const result = await extractImage(buffer);
+      const chunks = chunkPlainText(result.text);
+      return {
+        chunks,
+        metadata: {
+          title: source.title,
+          rawText: result.text.slice(0, 4000),
+          metadata: {
+            description: result.description,
+            warnings: result.warnings,
+            confidence: result.confidence,
+            format: result.metadata.format,
+            model: result.metadata.model,
+          },
         },
       };
     }

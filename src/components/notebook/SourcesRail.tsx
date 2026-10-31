@@ -93,8 +93,8 @@ export function SourcesRail({
     for (const file of files) {
       const type = inferFileType(file);
       if (!type) {
-        toast.error(
-          `"${file.name}" isn't a supported file type (PDF, VTT, SRT, TXT)`,
+         toast.error(
+          `"${file.name}" isn't a supported file type (PDF, VTT, SRT, TXT, JPG, PNG, WEBP)`,
         );
         continue;
       }
@@ -123,7 +123,7 @@ export function SourcesRail({
         <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 border-2 border-dashed border-primary bg-background/90 backdrop-blur-sm">
           <UploadCloud className="h-8 w-8 text-primary" />
           <p className="text-sm font-medium">Drop to add source</p>
-          <p className="text-xs text-muted-foreground">PDF, VTT, SRT, or TXT</p>
+          <p className="text-xs text-muted-foreground">PDF, VTT, SRT, TXT, or images (JPG, PNG, WEBP)</p>
         </div>
       )}
       {submitting && (

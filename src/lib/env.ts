@@ -37,6 +37,7 @@ const envSchema = z.object({
   OPENAI_CHAT_MODEL: z.string().default("gpt-4o-mini"),
   OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
   OPENAI_TTS_MODEL: z.string().default("tts-1"),
+  OPENAI_VISION_MODEL: z.string().default("gpt-4o-mini"),
   OPENAI_REALTIME_MODEL: z.string().default("gpt-realtime"),
   OPENAI_REALTIME_VOICE: z.string().default("marin"),
 
@@ -140,6 +141,7 @@ export const serverEnv = {
     ttsModel: pick("OPENAI_TTS_MODEL") ?? "tts-1",
     realtimeModel: pick("OPENAI_REALTIME_MODEL") ?? "gpt-realtime",
     realtimeVoice: pick("OPENAI_REALTIME_VOICE") ?? "marin",
+    visionModel: pick("OPENAI_VISION_MODEL") ?? "gpt-4o-mini",
   },
   qdrant: {
     url: pick("QDRANT_URL")!,

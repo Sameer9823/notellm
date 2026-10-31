@@ -40,6 +40,8 @@ export function useArtifacts(notebookId: string) {
             timer.current = setTimeout(() => poll(true), 2000);
           }
         }
+      } catch {
+        // Network or parse error — stop polling; will retry on remount.
       } finally {
         setLoading(false);
       }

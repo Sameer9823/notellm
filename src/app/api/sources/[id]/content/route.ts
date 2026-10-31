@@ -56,7 +56,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     durationSec: source.durationSec,
     language: source.language,
     metadata: source.metadata,
-    hasFile: source.type === "PDF" && (!!source.storagePath || !!source.sourceFile),
+    storagePath: source.storagePath,
+    storagePublicId: source.storagePublicId,
+    hasFile: (source.type === "PDF" || source.type === "IMAGE") && (!!source.storagePath || !!source.sourceFile),
   };
 
   // ── ChunkId mode: return the target chunk ±2 neighbors ──

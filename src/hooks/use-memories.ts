@@ -19,6 +19,8 @@ export function useMemories() {
     try {
       const res = await fetch("/api/memory", { cache: "no-store" });
       if (res.ok) setMemories((await res.json()).memories);
+    } catch {
+      // Network error — memories will retry on remount.
     } finally {
       setLoading(false);
     }

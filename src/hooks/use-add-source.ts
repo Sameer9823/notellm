@@ -36,12 +36,12 @@ export function useAddSource(notebookId: string, onAdded: () => void) {
     }
   }
 
-  /** PDFs go browser -> Cloudinary directly (Vercel rejects request bodies
-   *  over ~4.5MB with a 413 before our route runs), then only the resulting
-   *  URL is POSTed to our API. Falls back to the old multipart path when
-   *  Cloudinary isn't configured (local dev) or for small VTT files.
+  /** PDFs and images go browser -> Cloudinary directly (Vercel rejects request
+   *  bodies over ~4.5MB with a 413 before our route runs), then only the
+   *  resulting URL is POSTed to our API. Falls back to the old multipart path
+   *  when Cloudinary isn't configured (local dev) or for small VTT files.
    *  Uses SIGNED upload (no preset needed) - gets signature from our API. */
-  async function uploadPdfDirect(file: File): Promise<Response | null> {
+  async function uploadToCloudinaryDirect(file: File, resourceType: "raw" | "image"): Promise<Response | null> {
     const base = `/api/notebooks/${notebookId}/sources`;
 
     // Read NEXT_PUBLIC_ env vars (available in browser)
@@ -54,9 +54,10 @@ export function useAddSource(notebookId: string, onAdded: () => void) {
     const folder = `footnote/sources/${notebookId}`;
     // public_id is just the UUID + extension — Cloudinary prepends `folder`
     // automatically, so including it here would double the path.
-    const publicId = `${crypto.randomUUID()}.pdf`;
+    const ext = file.name.substring(file.name.lastIndexOf("."));
+    const publicId = `${crypto.randomUUID()}${ext}`;
     const sigRes = await fetch(
-      `/api/cloudinary/upload-signature?folder=${encodeURIComponent(folder)}&publicId=${encodeURIComponent(publicId)}`
+      `/api/cloudinary/upload-signature?folder=${encodeURIComponent(folder)}&resourceType=${encodeURIComponent(resourceType)}&publicId=${encodeURIComponent(publicId)}`
     );
     if (!sigRes.ok) {
       const err = await sigRes.json().catch(() => ({}));
@@ -72,11 +73,10 @@ export function useAddSource(notebookId: string, onAdded: () => void) {
     cloudForm.append("folder", folder);
     cloudForm.append("public_id", publicId);
 
-    const up = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/raw/upload`, {
+    const up = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`, {
       method: "POST",
       body: cloudForm,
     }).catch((err) => {
-      console.error("[uploadPdfDirect] Fetch failed:", err);
       throw new Error(`Network error uploading to Cloudinary: ${err.message}`);
     });
     const uploaded = await up.json().catch(() => null);
@@ -84,23 +84,16 @@ export function useAddSource(notebookId: string, onAdded: () => void) {
       const cloudinaryError = uploaded?.error?.message ?? String(up.statusText);
       const lowered = cloudinaryError.toLowerCase();
       if (lowered.includes("size") || lowered.includes("too large") || up.status === 413) {
-        throw new Error("PDF exceeds the storage limit (10MB on the current Cloudinary plan)");
+        throw new Error("File exceeds the storage limit on the current Cloudinary plan");
       }
       throw new Error(uploaded?.error?.message || `Upload to file storage failed (${up.status})`);
     }
-
-    // Debug: log what Cloudinary returned
-    console.debug("[uploadPdfDirect] Cloudinary response:", {
-      secure_url: uploaded.secure_url,
-      public_id: uploaded.public_id,
-      expectedPublicId: publicId,
-    });
 
     return fetch(base, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        type: "PDF",
+        type: resourceType === "image" ? "IMAGE" : "PDF",
         title: file.name,
         fileSizeBytes: file.size,
         storagePath: uploaded.secure_url,
@@ -109,22 +102,25 @@ export function useAddSource(notebookId: string, onAdded: () => void) {
     });
   }
 
-  async function submitFile(file: File, type: Extract<SourceType, "PDF" | "VTT">) {
+  async function submitFile(file: File, type: Extract<SourceType, "PDF" | "VTT" | "IMAGE">) {
     setSubmitting(true);
     try {
       let res: Response | null = null;
-      if (type === "PDF") res = await uploadPdfDirect(file);
+      if (type === "PDF" || type === "IMAGE") {
+        const resourceType = type === "IMAGE" ? "image" : "raw";
+        res = await uploadToCloudinaryDirect(file, resourceType);
+      }
 
       if (!res) {
-        // In production, PDFs larger than ~4MB REQUIRE the Cloudinary direct-upload
-        // path — Vercel rejects multipart request bodies over the platform limit
-        // with a 413 before our route handler even runs. Only fall back to the
-        // multipart path for small files or local dev (where Cloudinary is
-        // typically not configured).
-        if (type === "PDF" && file.size > 4 * 1024 * 1024) {
+        // In production, PDFs/images larger than ~4MB REQUIRE the Cloudinary
+        // direct-upload path — Vercel rejects multipart request bodies over
+        // the platform limit with a 413 before our route handler even runs.
+        // Only fall back to the multipart path for small files or local dev.
+        const largeAndNeedsCloudinary = (type === "PDF" || type === "IMAGE") && file.size > 4 * 1024 * 1024;
+        if (largeAndNeedsCloudinary) {
           throw new Error(
             "Cloudinary isn't configured on this deployment: set NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME and " +
-              "NEXT_PUBLIC_CLOUDINARY_API_KEY so large PDFs upload directly."
+              "NEXT_PUBLIC_CLOUDINARY_API_KEY so large files upload directly."
           );
         }
         const form = new FormData();
@@ -135,7 +131,7 @@ export function useAddSource(notebookId: string, onAdded: () => void) {
 
       if (!res.ok) {
         if (res.status === 413) {
-          throw new Error("File is too large to upload. Configure Cloudinary so large PDFs can upload directly.");
+          throw new Error("File is too large to upload. Configure Cloudinary so large files can upload directly.");
         }
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error?.formErrors?.[0] || err.error || "Failed to upload file");
@@ -157,10 +153,17 @@ export function useAddSource(notebookId: string, onAdded: () => void) {
 
   /** Guesses source type from a dropped file's extension/MIME so drag-and-drop
    *  onto the rail (which has no type picker) can still call submitFile. */
-  function inferFileType(file: File): Extract<SourceType, "PDF" | "VTT"> | null {
+  function inferFileType(file: File): Extract<SourceType, "PDF" | "VTT" | "IMAGE"> | null {
     const name = file.name.toLowerCase();
     if (name.endsWith(".pdf") || file.type === "application/pdf") return "PDF";
     if (name.endsWith(".vtt") || name.endsWith(".srt") || name.endsWith(".txt")) return "VTT";
+    if (
+      name.endsWith(".jpg") || name.endsWith(".jpeg") ||
+      name.endsWith(".png") || name.endsWith(".webp") ||
+      file.type.startsWith("image/")
+    ) {
+      return "IMAGE";
+    }
     return null;
   }
 

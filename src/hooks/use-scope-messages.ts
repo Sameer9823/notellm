@@ -67,6 +67,9 @@ export function useScopeMessages(
           return merged;
         });
         setNextCursor(data.nextCursor ?? null);
+      } catch {
+        setMessages([]);
+        setNextCursor(null);
       } finally {
         if (isLoadMore) setLoadingMore(false);
         else setLoading(false);

@@ -1,15 +1,15 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { Mic, Volume2, Loader2, AlertCircle, CheckCircle, Brain, Zap } from "lucide-react";
+import { Headphones, Volume2, Loader2, AlertCircle, CheckCircle, Brain, Zap } from "lucide-react";
 import type { VoiceError, VoiceState } from "@/lib/voice/types";
 
-const STATUS_CONFIG: Record<VoiceState, { text: string; icon: typeof Mic; color: string; animate?: boolean }> = {
-  idle: { text: "Ready when you are", icon: Mic, color: "text-muted-foreground" },
+const STATUS_CONFIG: Record<VoiceState, { text: string; icon: typeof Headphones; color: string; animate?: boolean }> = {
+  idle: { text: "Ready when you are", icon: Headphones, color: "text-muted-foreground" },
   connecting: { text: "Connecting…", icon: Loader2, color: "text-primary", animate: true },
   reconnecting: { text: "Reconnecting…", icon: Loader2, color: "text-primary", animate: true },
-  listening: { text: "Listening", icon: Mic, color: "text-primary" },
-  user_speaking: { text: "You're speaking", icon: Mic, color: "text-primary" },
+  listening: { text: "Listening", icon: Headphones, color: "text-primary" },
+  user_speaking: { text: "You're speaking", icon: Headphones, color: "text-primary" },
   thinking: { text: "Thinking…", icon: Brain, color: "text-accent", animate: true },
   speaking: { text: "Speaking", icon: Volume2, color: "text-accent" },
   assistant_speaking: { text: "Speaking", icon: Volume2, color: "text-accent" },

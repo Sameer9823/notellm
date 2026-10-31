@@ -35,6 +35,7 @@ export const openai = new Proxy({} as OpenAI, {
 export const CHAT_MODEL = serverEnv.openai.chatModel;
 export const EMBEDDING_MODEL = serverEnv.openai.embeddingModel;
 export const TTS_MODEL = serverEnv.openai.ttsModel;
+export const VISION_MODEL = serverEnv.openai.visionModel;
 
 /**
  * Per-request timeouts for the audio pipeline.

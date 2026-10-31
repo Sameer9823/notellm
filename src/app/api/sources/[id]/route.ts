@@ -6,6 +6,7 @@ import { safeSend } from "@/lib/inngest/client";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 import { consumeCredits, creditsExhaustedResponse, CREDIT_COSTS } from "@/lib/credits";
 import { cloudinaryEnabled, uploadBuffer, destroyAsset } from "@/lib/cloudinary";
+import { isValidImageExtension, validateImageBuffer, MAX_IMAGE_BYTES } from "@/lib/extractors/image";
 import { z } from "zod";
 import crypto from "crypto";
 
@@ -33,6 +34,13 @@ const jsonSchema = z.discriminatedUnion("type", [
     storagePath: z.string().url(),
     storagePublicId: z.string().min(1),
   }),
+  z.object({
+    type: z.literal("IMAGE"),
+    title: z.string().min(1).max(255),
+    fileSizeBytes: z.number().int().positive().max(MAX_IMAGE_BYTES),
+    storagePath: z.string().url(),
+    storagePublicId: z.string().min(1),
+  }),
 ]);
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -56,16 +64,29 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   let spendStatus: Awaited<ReturnType<typeof consumeCredits>>["status"] | null = null;
 
   if (contentType.includes("multipart/form-data")) {
-    // PDF or VTT file upload
     const form = await req.formData();
     const file = form.get("file") as File | null;
     const type = form.get("type") as string | null;
 
-    if (!file || (type !== "PDF" && type !== "VTT")) {
-      return NextResponse.json({ error: "A PDF or VTT file is required" }, { status: 400 });
+    const accepted = type === "PDF" || type === "VTT" || type === "IMAGE";
+    if (!file || !accepted) {
+      return NextResponse.json({ error: "A PDF, VTT, or image file is required" }, { status: 400 });
     }
     if (type === "PDF" && file.size > MAX_PDF_BYTES) {
       return NextResponse.json({ error: "PDF exceeds 25MB limit" }, { status: 400 });
+    }
+    if (type === "IMAGE") {
+      if (file.size > MAX_IMAGE_BYTES) {
+        return NextResponse.json({ error: `Image exceeds ${MAX_IMAGE_BYTES / 1024 / 1024}MB limit` }, { status: 400 });
+      }
+      if (!isValidImageExtension(file.name)) {
+        return NextResponse.json({ error: "Unsupported image format. Use JPG, PNG, or WEBP." }, { status: 400 });
+      }
+      const probe = Buffer.from(await file.arrayBuffer());
+      const check = validateImageBuffer(probe);
+      if (!check.valid) {
+        return NextResponse.json({ error: check.error }, { status: 400 });
+      }
     }
 
     const spend = await consumeCredits(userId, CREDIT_COSTS.sourceUpload);
@@ -76,13 +97,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     let storagePath: string | null = null;
     let storagePublicId: string | null = null;
-    let rawText: string | null = type === "VTT" ? buffer.toString("utf-8") : null;
+    const rawText: string | null = type === "VTT" ? buffer.toString("utf-8") : null;
+    const resourceType = type === "IMAGE" ? "image" : "raw";
 
     if (cloudinaryEnabled()) {
       try {
-        const publicId = `footnote/sources/${notebookId}/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+        const publicId = `${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
         const uploaded = await uploadBuffer(buffer, {
-          resourceType: "raw",
+          resourceType,
           folder: `footnote/sources/${notebookId}`,
           publicId,
           filename: file.name,
@@ -91,10 +113,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         storagePublicId = uploaded.publicId;
       } catch (e) {
         uploadWarning = "Cloudinary upload failed — file stored in Postgres instead";
+        // eslint-disable-next-line no-console
         console.error("[sources] Cloudinary upload failed:", e);
       }
     } else {
-      uploadWarning = "Cloudinary not configured — file stored in Postgres (large PDFs may fail)";
+      uploadWarning = "Cloudinary not configured — file stored in Postgres (large files may fail)";
     }
 
     if (type === "PDF") {
@@ -102,6 +125,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         data: {
           notebookId,
           type: "PDF",
+          title: file.name,
+          status: "QUEUED",
+          storagePath,
+          storagePublicId,
+          fileSizeBytes: file.size,
+        },
+      });
+    } else if (type === "IMAGE") {
+      source = await db.source.create({
+        data: {
+          notebookId,
+          type: "IMAGE",
           title: file.name,
           status: "QUEUED",
           storagePath,
@@ -122,9 +157,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
 
     // Fallback: store raw bytes in SourceFile when there's no Cloudinary
-    // storagePath, so /api/sources/[id]/file can serve the PDF and the ingest
+    // storagePath, so /api/sources/[id]/file can serve the file and the ingest
     // pipeline can re-extract without relying on the transient base64-in-rawText.
-    if (type === "PDF" && !storagePath) {
+    if (!storagePath && (type === "PDF" || type === "IMAGE")) {
       await db.sourceFile.create({
         data: { sourceId: source.id, data: buffer },
       });
@@ -147,10 +182,35 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (!data.storagePath.startsWith("https://res.cloudinary.com/")) {
         return NextResponse.json({ error: "Invalid file reference" }, { status: 400 });
       }
+      const expectedPrefix = `footnote/sources/${notebookId}/`;
+      const publicIdValid = data.storagePublicId.startsWith(expectedPrefix) &&
+        (data.storagePublicId.endsWith(".pdf") || data.storagePath.endsWith(".pdf"));
+      if (!publicIdValid) {
+        return NextResponse.json({ error: "Invalid file reference" }, { status: 400 });
+      }
       source = await db.source.create({
         data: {
           notebookId,
           type: "PDF",
+          title: data.title,
+          status: "QUEUED",
+          storagePath: data.storagePath,
+          storagePublicId: data.storagePublicId,
+          fileSizeBytes: data.fileSizeBytes,
+        },
+      });
+    } else if (data.type === "IMAGE") {
+      if (!data.storagePath.startsWith("https://res.cloudinary.com/")) {
+        return NextResponse.json({ error: "Invalid file reference" }, { status: 400 });
+      }
+      const expectedPrefix = `footnote/sources/${notebookId}/`;
+      if (!data.storagePublicId.startsWith(expectedPrefix)) {
+        return NextResponse.json({ error: "Invalid file reference" }, { status: 400 });
+      }
+      source = await db.source.create({
+        data: {
+          notebookId,
+          type: "IMAGE",
           title: data.title,
           status: "QUEUED",
           storagePath: data.storagePath,
@@ -225,8 +285,10 @@ export async function DELETE(
   // Delete from Cloudinary if stored there (best-effort)
   if (source.storagePublicId) {
     try {
-      await destroyAsset(source.storagePublicId, "raw");
+      const resourceType = source.type === "IMAGE" ? "image" : "raw";
+      await destroyAsset(source.storagePublicId, resourceType);
     } catch (err) {
+      // eslint-disable-next-line no-console
       console.warn("[sources] Cloudinary delete failed:", err);
     }
   }
@@ -236,7 +298,8 @@ export async function DELETE(
     const { deleteBySource } = await import("@/lib/qdrant");
     await deleteBySource(sourceId);
   } catch (err) {
-    console.warn("[sources] Qdrant delete failed:", err);
+      // eslint-disable-next-line no-console
+      console.warn("[sources] Qdrant delete failed:", err);
   }
 
   // Delete from database (cascades to SourceFile, progress, etc.)

@@ -58,6 +58,8 @@ type SourceContent = {
     language?: string | null;
     metadata?: { videoId?: string } | null;
     hasFile?: boolean;
+    storagePath?: string | null;
+    storagePublicId?: string | null;
   };
   chunks: ChunkDTO[];
 };
@@ -412,6 +414,44 @@ export function StudioPanel({
                     data.chunks.find((c) => c.id === citation.chunkId)?.content
                   }
                 />
+              </div>
+            ) : data &&
+              data.source.type === "IMAGE" &&
+              data.source.hasFile ? (
+              <div className="flex-1 min-h-0 overflow-auto">
+                <ScrollArea className="h-full w-full">
+                  <div className="p-4">
+                    <SourceHeader source={data.source} />
+                    <div className="mt-4 rounded-lg border border-border bg-secondary/30">
+                      <img
+                        src={`/api/sources/${data.source.id}/file`}
+                        alt={data.source.title}
+                        className="h-auto w-full object-contain"
+                      />
+                    </div>
+                    <div className="mt-4 space-y-3 font-mono text-[13px] leading-relaxed">
+                      {data.chunks.map((c) => {
+                        const isHighlighted = c.id === citation.chunkId;
+                        return (
+                          <div
+                            key={c.id}
+                            ref={isHighlighted ? highlightRef : undefined}
+                            className={cn(
+                              "rounded-md border px-2.5 py-2 transition-colors",
+                              isHighlighted
+                                ? "border-primary/50 bg-primary/10"
+                                : "border-transparent",
+                            )}
+                          >
+                            <p className="whitespace-pre-wrap text-foreground">
+                              {c.content}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </ScrollArea>
               </div>
             ) : data ? (
               <ScrollArea className="flex-1">

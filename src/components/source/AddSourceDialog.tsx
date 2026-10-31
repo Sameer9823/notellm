@@ -1,12 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
 import {
   File as FileIcon,
   Youtube,
   FileText,
-  Captions,
   Globe,
   Loader2,
   Upload,
@@ -14,6 +13,8 @@ import {
   Search,
   Check,
   ExternalLink,
+  Image as ImageIcon,
+  X,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,7 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { useAddSource } from "@/hooks/use-add-source";
 import { useWebSearch, type WebSearchResult } from "@/hooks/use-web-search";
+import { toast } from "sonner";
 import type { SourceType } from "@/types";
 
 type PickerType = SourceType | "WEB_SEARCH";
@@ -32,7 +34,7 @@ const TILES: Tile[] = [
   { type: "PDF", label: "PDF", hint: "Upload a .pdf file", icon: FileIcon },
   { type: "YOUTUBE", label: "YT Link", hint: "Paste a YouTube URL", icon: Youtube },
   { type: "TEXT", label: "Text", hint: "Paste or type plain text", icon: FileText },
-  { type: "VTT", label: "VTT", hint: "Upload a transcript file", icon: Captions },
+  { type: "IMAGE", label: "Image", hint: "Upload JPG, PNG, or WEBP images", icon: ImageIcon },
   { type: "URL", label: "Web Link", hint: "Paste any article URL", icon: Globe },
   { type: "WEB_SEARCH", label: "Web Search", hint: "Search the web and pick results to add", icon: Search },
 ];
@@ -49,7 +51,7 @@ export function AddSourceDialog({
   onAdded: () => void;
 }) {
   const [selected, setSelected] = useState<PickerType | null>(null);
-  const { submitting, submitJson: submitJsonBase, submitFile: submitFileBase } = useAddSource(notebookId, onAdded);
+  const { submitting, submitJson: submitJsonBase, submitFile: submitFileBase, inferFileType } = useAddSource(notebookId, onAdded);
   const webSearch = useWebSearch(notebookId, onAdded);
 
   function reset() {
@@ -73,12 +75,25 @@ export function AddSourceDialog({
     }
   }
 
-  async function submitFile(file: File, type: "PDF" | "VTT") {
+  async function submitFile(file: File, type: "PDF" | "IMAGE") {
     const ok = await submitFileBase(file, type);
     if (ok) {
       onOpenChange(false);
       reset();
     }
+  }
+
+  async function submitImages(files: FileList | File[]) {
+    let ok = true;
+    for (const file of Array.from(files)) {
+      const result = await submitFileBase(file, "IMAGE");
+      if (!result) ok = false;
+    }
+    if (ok) {
+      onOpenChange(false);
+      reset();
+    }
+    return ok;
   }
 
   return (
@@ -129,7 +144,7 @@ export function AddSourceDialog({
         )}
 
         {selected === "PDF" && <FileDrop accept=".pdf" busy={submitting} onFile={(f) => submitFile(f, "PDF")} label="Drop a PDF or click to browse" />}
-        {selected === "VTT" && <FileDrop accept=".vtt,.srt,.txt" busy={submitting} onFile={(f) => submitFile(f, "VTT")} label="Drop a .vtt transcript or click to browse" />}
+        {selected === "IMAGE" && <ImageDrop busy={submitting} onFiles={(files) => submitImages(files)} label="Drop images or click to browse" />}
 
         {selected === "YOUTUBE" && (
           <UrlForm
@@ -199,22 +214,129 @@ function FileDrop({ accept, busy, onFile, label }: { accept: string; busy: boole
   );
 }
 
+const IMAGE_ACCEPT = "image/jpeg,image/jpg,image/png,image/webp";
+const MAX_IMAGE_FILE_SIZE = 10 * 1024 * 1024;
+
+function ImageDrop({ busy, onFiles, label }: { busy: boolean; onFiles: (files: FileList | File[]) => void; label: string }) {
+  const [dragOver, setDragOver] = useState(false);
+  const [previews, setPreviews] = useState<File[]>([]);
+
+  // Create/revoke object URLs once per file (not on every render) to avoid
+  // memory leaks and prevent reload loops from stale URLs.
+  const objectUrls = useMemo(
+    () => previews.map((f) => URL.createObjectURL(f)),
+    [previews]
+  );
+  useEffect(() => () => objectUrls.forEach((url) => URL.revokeObjectURL(url)), [objectUrls]);
+
+  function onFilesSelected(files: File[]) {
+    const valid: File[] = [];
+    for (const file of files) {
+      if (!file.type.startsWith("image/")) continue;
+      if (file.size > MAX_IMAGE_FILE_SIZE) {
+        toast.error(`${file.name} exceeds 10MB limit`);
+        continue;
+      }
+      valid.push(file);
+    }
+    if (valid.length === 0) {
+      toast.error("Please select valid image files (JPG, PNG, WEBP)");
+      return;
+    }
+    setPreviews((prev) => [...prev, ...valid]);
+  }
+
+  function removePreview(index: number) {
+    setPreviews((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (previews.length === 0) return;
+    onFiles(previews);
+    setPreviews([]);
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <label
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          const files = Array.from(e.dataTransfer.files);
+          if (files.length) onFilesSelected(files);
+        }}
+        className={cn(
+          "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border p-10 text-center text-sm text-muted-foreground transition-colors hover:border-primary/50",
+          dragOver && "border-primary bg-primary/5"
+        )}
+      >
+        {busy ? <Loader2 className="h-6 w-6 animate-spin text-primary" /> : <Upload className="h-6 w-6" />}
+        <span>{busy ? "Uploading…" : label}</span>
+        <input
+          type="file"
+          accept={IMAGE_ACCEPT}
+          multiple
+          className="hidden"
+          disabled={busy}
+          onChange={(e) => {
+            const files = e.target.files ? Array.from(e.target.files) : [];
+            if (files.length) onFilesSelected(files);
+          }}
+        />
+      </label>
+
+      {previews.length > 0 && (
+        <div className="grid grid-cols-3 gap-2">
+          {previews.map((file, i) => (
+            <div key={i} className="group relative aspect-square rounded-lg border border-border bg-secondary/30">
+              <img
+                src={objectUrls[i]}
+                alt={file.name}
+                className="h-full w-full rounded-lg object-cover"
+                loading="lazy"
+              />
+              <button
+                type="button"
+                onClick={() => removePreview(i)}
+                className="absolute top-0.5 right-0.5 rounded-full bg-secondary/60 p-0.5 opacity-0 transition-opacity group-hover:opacity-100"
+                disabled={busy}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Button type="submit" disabled={busy || previews.length === 0} className="w-full">
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : `Add ${previews.length || ""} image${previews.length === 1 ? "" : "s"}`}
+      </Button>
+    </form>
+  );
+}
+
 function UrlForm({ placeholder, busy, onSubmit }: { placeholder: string; busy: boolean; onSubmit: (url: string) => void }) {
   const [url, setUrl] = useState("");
   return (
     <form
-    onSubmit={(e) => {
-      e.preventDefault();
-      const trimmed = url.trim();
-      if (!trimmed) return;
-      // `z.string().url()` rejects scheme-less input like "youtube.com/...",
-      // which the server surfaces as a 400. Normalize bare URLs so pasting a
-      // link without the protocol doesn't fail at the API edge.
-      const normalized = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-      onSubmit(normalized);
-    }}
-    className="space-y-3"
-  >
+      onSubmit={(e) => {
+        e.preventDefault();
+        const trimmed = url.trim();
+        if (!trimmed) return;
+        // `z.string().url()` rejects scheme-less input like "youtube.com/...",
+        // which the server surfaces as a 400. Normalize bare URLs so pasting a
+        // link without the protocol doesn't fail at the API edge.
+        const normalized = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+        onSubmit(normalized);
+      }}
+      className="space-y-3"
+    >
       <div className="space-y-1.5">
         <Label htmlFor="url">URL</Label>
         <Input id="url" autoFocus placeholder={placeholder} value={url} onChange={(e) => setUrl(e.target.value)} disabled={busy} />

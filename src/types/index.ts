@@ -1,4 +1,4 @@
-export type SourceType = "PDF" | "TEXT" | "URL" | "YOUTUBE" | "VTT" | "WEB";
+export type SourceType = "PDF" | "TEXT" | "URL" | "YOUTUBE" | "VTT" | "IMAGE" | "WEB";
 export type SourceStatus = "UPLOADING" | "QUEUED" | "INDEXING" | "READY" | "FAILED";
 
 export type SourceDTO = {
@@ -9,6 +9,8 @@ export type SourceDTO = {
   status: SourceStatus;
   errorMessage?: string | null;
   originUrl?: string | null;
+  storagePath?: string | null;
+  storagePublicId?: string | null;
   chunkCount: number;
   pageCount?: number | null;
   durationSec?: number | null;

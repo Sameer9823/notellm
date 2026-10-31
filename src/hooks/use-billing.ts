@@ -30,6 +30,8 @@ export function useBilling() {
     try {
       const res = await fetch("/api/billing/summary", { cache: "no-store" });
       if (res.ok) setSummary(await res.json());
+    } catch {
+      // Network error — summary will retry on remount.
     } finally {
       setLoading(false);
     }

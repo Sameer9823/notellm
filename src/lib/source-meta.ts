@@ -1,4 +1,4 @@
-import { FileText, Globe, Youtube, Captions, File, Search } from "lucide-react";
+import { FileText, Globe, Youtube, Captions, File, Search, Image } from "lucide-react";
 import type { SourceType } from "@/types";
 
 export const sourceTypeIcon: Record<SourceType, typeof FileText> = {
@@ -7,6 +7,7 @@ export const sourceTypeIcon: Record<SourceType, typeof FileText> = {
   URL: Globe,
   YOUTUBE: Youtube,
   VTT: Captions,
+  IMAGE: Image,
   WEB: Search,
 };
 
@@ -16,6 +17,7 @@ export const sourceTypeLabel: Record<SourceType, string> = {
   URL: "Web link",
   YOUTUBE: "YouTube",
   VTT: "Transcript",
+  IMAGE: "Image",
   WEB: "Web search",
 };
 

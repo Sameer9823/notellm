@@ -35,6 +35,8 @@ export function useReview() {
       ]);
       if (queueRes.ok) setQueue((await queueRes.json()).queue);
       if (statsRes.ok) setStats((await statsRes.json()).stats);
+    } catch {
+      // Network error — stats will retry on remount.
     } finally {
       setLoading(false);
     }

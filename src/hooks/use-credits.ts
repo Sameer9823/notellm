@@ -31,6 +31,8 @@ export function useCredits() {
         const data: { credits: CreditsInfo } = await res.json();
         setCredits(data.credits);
       }
+    } catch (e) {
+      // Silently ignore — polling will retry on the next interval.
     } finally {
       setLoading(false);
     }

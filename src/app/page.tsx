@@ -5,8 +5,8 @@ import {
   FileText,
   Youtube,
   Globe,
-  Captions,
   File,
+  Image as ImageIcon,
   Quote,
   ShieldCheck,
   Layers,
@@ -58,7 +58,7 @@ export default async function LandingPage() {
           Stop copy-pasting into ChatGPT. <span className="text-primary">Ask your sources</span> directly.
         </h1>
         <p className="mx-auto mt-4 max-w-xl text-balance text-muted-foreground">
-          Drop in PDFs, web pages, YouTube videos, or transcripts and Footnote reads them for you. Ask a
+           Drop in PDFs, images, web pages, YouTube videos, or transcripts and Footnote reads them for you. Ask a
           question in plain language and get an answer footnoted to the exact page, timestamp, or
           passage it came from — never a guess dressed up as fact.
         </p>
@@ -82,7 +82,7 @@ export default async function LandingPage() {
             { icon: Globe, label: "Web link" },
             { icon: Youtube, label: "YouTube" },
             { icon: FileText, label: "Text" },
-            { icon: Captions, label: "Transcript" },
+            { icon: ImageIcon, label: "Image" },
           ].map((s) => (
             <div
               key={s.label}
@@ -123,7 +123,7 @@ export default async function LandingPage() {
             icon={UploadCloud}
             step="1"
             title="Add your sources"
-            desc="Upload a PDF, paste a link, or drop in a YouTube video. Footnote extracts, chunks, and indexes it in the background."
+            desc="Upload a PDF or image, paste a link, or drop in a YouTube video. Footnote extracts, chunks, and indexes it in the background."
           />
           <Step
             icon={MessageSquare}
