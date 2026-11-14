@@ -13,7 +13,7 @@ import {
   Send,
   Sparkles,
   Globe,
-  Mic,
+  Phone,
   ArrowDown,
   Maximize2,
   Minimize2,
@@ -93,8 +93,6 @@ export const ChatPanel = forwardRef<
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [textareaHeight, setTextareaHeight] = useState(52);
-  const [isRecording, setIsRecording] = useState(false);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
 
   useEffect(() => {
     onMessagesChange?.(messages.length);
@@ -144,63 +142,7 @@ export const ChatPanel = forwardRef<
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  useEffect(() => {
-    return () => {
-      recognitionRef.current?.abort();
-    };
-  }, []);
-
   const readySources = sources.filter((s) => s.status === "READY");
-
-  const toggleSpeechRecognition = useCallback(() => {
-    if (isRecording) {
-      recognitionRef.current?.abort();
-      setIsRecording(false);
-      return;
-    }
-
-    const SpeechRecognitionCtor =
-      (typeof window !== "undefined" &&
-        (window.SpeechRecognition || window.webkitSpeechRecognition)) ||
-      null;
-
-    if (SpeechRecognitionCtor === null) {
-      toast.error("Speech recognition is not supported in your browser.");
-      return;
-    }
-
-    try {
-      const recognition = new SpeechRecognitionCtor();
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = "en-US";
-
-      recognition.onresult = (event: SpeechRecognitionEvent) => {
-        const transcript = event.results[0]?.[0]?.transcript ?? "";
-        if (transcript) {
-          setInput((prev) => (prev ? `${prev} ${transcript}` : transcript));
-        }
-      };
-
-      recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-        if (event.error === "not-allowed" || event.error === "no-speech") {
-          toast.error("Microphone access denied. Please allow microphone permissions.");
-        } else if (event.error === "network") {
-          toast.error("Network error during speech recognition.");
-        }
-      };
-
-      recognition.onend = () => {
-        setIsRecording(false);
-      };
-
-      recognitionRef.current = recognition;
-      recognition.start();
-      setIsRecording(true);
-    } catch {
-      toast.error("Failed to start speech recognition.");
-    }
-  }, [isRecording]);
 
   const runQuery = useCallback(
     async (
@@ -577,14 +519,11 @@ export const ChatPanel = forwardRef<
                type="button"
                variant="outline"
                size="icon"
-               onClick={toggleSpeechRecognition}
-               title={isRecording ? "Stop recording" : "Voice input"}
-               className={cn(
-                 "shrink-0 transition-colors",
-                 isRecording && "text-destructive hover:text-destructive",
-               )}
+               onClick={() => setVoiceOpen(true)}
+               title="Start voice conversation"
+               className="shrink-0"
              >
-               <Mic className={cn("h-4 w-4", isRecording && "animate-pulse")} />
+               <Phone className="h-4 w-4" />
              </Button>
             <div className="flex-1 min-w-0 relative">
               <Textarea
