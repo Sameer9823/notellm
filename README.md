@@ -1,5 +1,5 @@
 # FootNote — AI Research Notebooks (RAG, from scratch)
-
+ 
 An AI-powered research assistant inspired by Gemini/NotebookLM: create isolated notebooks, add sources
 (PDF, plain text, website URL, YouTube video, VTT transcript), and ask questions that are answered **only**
 from what you gave it — every claim cited back to the exact page, timestamp, or passage.
